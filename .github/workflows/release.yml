@@ -71,24 +71,24 @@ jobs:
           tagName: v__VERSION__
           releaseName: "CookieLauncher v__VERSION__"
           releaseBody: |
-            Açık kaynak, hafif Minecraft başlatıcı (Tauri + Python çekirdek, GPL-3.0).
+            Acik kaynak, hafif Minecraft baslatici (Tauri + Python cekirdek, GPL-3.0).
 
             **Paketler**
-            - **Windows:** Kurulum (.exe) — gömülü çekirdek sayesinde Python gerekmez
+            - **Windows:** Kurulum (.exe) -- gomulu cekirdek sayesinde Python gerekmez
             - **Linux:** AppImage / .deb / .rpm
-            - **macOS:** .dmg (Apple Silicon) ve .dmg (Intel) — *deneysel*
+            - **macOS:** .dmg (Apple Silicon) ve .dmg (Intel) -- *deneysel*
 
             > **macOS notu:** DMG paketleri imzasız ve notarize edilmemiştir; nedeni Apple Developer
-            > Program üyeliğinin (**99 $/yıl**) karşılanamamasıdır. İlk açılışta Gatekeeper
-            > "geliştirici doğrulanamıyor" uyarısı verir. **Sağ tık → "Aç" macOS 15 (Sequoia) ve
-            > sonrasında artık çalışmaz.** Şu iki yoldan birini kullanın: (1) Terminal:
+            > Program uyeliginin (**99 $/yil**) karsilanamamasi olustur. Ilk acilisita Gatekeeper
+            > "gelistirici dogrulanamiyor" uyariis verir. **Sag tik -> "Ac" macOS 15 (Sequoia) ve
+            > sonrasinda artık calismaz.** Su iki yoldan birini kullanin: (1) Terminal:
             > `xattr -dr com.apple.quarantine /Applications/CookieLauncher.app`
-            > (2) Sistem Ayarları → Gizlilik ve Güvenlik → "Yine de Aç".
-            > Uygulama GPL-3.0 açık kaynaktır; dileyen kaynak koddan derleyebilir.
-            > macOS derlemeleri geliştirici tarafından test edilmemiştir; sorun bildirirseniz seviniriz.
+            > (2) Sistem Ayarları -> Gizlilik ve Guvenlik -> "Yine de Ac".
+            > Uygulama GPL-3.0 acik kaynaktir; dileyen kaynak koddan derleyebilir.
+            > macOS derlemeleri gelistirici tarafindan test edilmemistir; sorun bildirirseniz seviniriz.
 
-            Mod kaynağı Modrinth'tir. Minecraft, Mojang Synergies AB'nin ticari markasıdır;
-            bu proje Mojang/Microsoft ile bağlantılı, sponsorlu veya onaylı değildir.
+            Mod kaynagi Modrinth'tir. Minecraft, Mojang Synergies AB'nin ticari markasidir;
+            bu proje Mojang/Microsoft ile baglantili, sponsorlu veya onayli degildir.
           releaseDraft: false
           prerelease: false
 
