@@ -31,6 +31,35 @@
 
     <!-- Pencere Kontrolleri -->
     <div class="titlebar-controls">
+      <!-- Tema Seçici -->
+      <div class="theme-dropdown">
+        <button class="theme-dropdown-btn" id="themeDropdownBtn" aria-haspopup="true" aria-expanded="false">
+          <span class="theme-option-icon">🎨</span>
+          <span>Tema</span>
+        </button>
+        <div class="theme-dropdown-menu" id="themeDropdownMenu" role="menu">
+          <button class="theme-option active" role="menuitem" data-theme="default">
+            <span class="theme-option-icon">🍪</span>
+            <span>Varsayılan (Obsidian)</span>
+          </button>
+          <button class="theme-option" role="menuitem" data-theme="turkish-flag">
+            <span class="theme-option-icon">🇹🇷</span>
+            <span>Türk Bayrağı</span>
+          </button>
+          <button class="theme-option" role="menuitem" data-theme="ottoman">
+            <span class="theme-option-icon">🕌</span>
+            <span>Osmanlı/Türk Motifleri</span>
+          </button>
+          <button class="theme-option" role="menuitem" data-theme="newyear">
+            <span class="theme-option-icon">🎄</span>
+            <span>Yılbaşı / Noel</span>
+          </button>
+          <button class="theme-option" role="menuitem" data-theme="winter">
+            <span class="theme-option-icon">❄️</span>
+            <span>Kış / Kar</span>
+          </button>
+        </div>
+      </div>
       <button class="control-btn" id="btnWinMinimize" title="Simge Durumuna Küçült" aria-label="Simge durumuna küçült">−</button>
       <button class="control-btn" id="btnWinMaximize" title="Ekranı Kapla" aria-label="Ekranı kapla">□</button>
       <button class="control-btn btn-close" id="btnWinClose" title="Kapat" aria-label="Kapat">✕</button>

@@ -12,6 +12,7 @@ const state = {
   loader: localStorage.getItem("cl_loader") || "fabric",
   cookieOptimize: localStorage.getItem("cl_optimize") !== "false",
   ram: parseInt(localStorage.getItem("cl_ram") || "4"),
+  theme: localStorage.getItem("cl_theme") || "default",
 
   // Sürüm Verileri
   versions: [],
@@ -247,6 +248,9 @@ function initUI() {
   if (ramSlider) ramSlider.value = state.ram;
   updateRamUI();
 
+  // Tema uygula
+  applyTheme(state.theme);
+
   // Hero + rail aktif profil özeti
   renderPlayHero();
 }
@@ -270,6 +274,17 @@ function updateRamUI() {
         : "Yalnızca vanilla oyun için önerilir.";
     summary.textContent = `${ram} GB ayrıldı • ${advice}`;
   }
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("cl_theme", theme);
+  state.theme = theme;
+  
+  // Dropdown menüdeki aktif seçeneği güncelle
+  document.querySelectorAll(".theme-option").forEach(opt => {
+    opt.classList.toggle("active", opt.getAttribute("data-theme") === theme);
+  });
 }
 
 function setupEventListeners() {
@@ -296,6 +311,32 @@ function setupEventListeners() {
 
   document.querySelectorAll(".dropdown-item[data-folder]").forEach(item => {
     item.addEventListener("click", () => openSystemFolder(item.getAttribute("data-folder")));
+  });
+
+  // Tema Seçici Dropdown
+  const themeBtn = document.getElementById("themeDropdownBtn");
+  const themeMenu = document.getElementById("themeDropdownMenu");
+  if (themeBtn && themeMenu) {
+    const syncThemeAria = () => themeBtn.setAttribute("aria-expanded", themeMenu.classList.contains("show") ? "true" : "false");
+    themeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      themeMenu.classList.toggle("show");
+      syncThemeAria();
+    });
+    window.addEventListener("click", () => {
+      themeMenu.classList.remove("show");
+      syncThemeAria();
+    });
+  }
+
+  document.querySelectorAll(".theme-option").forEach(opt => {
+    opt.addEventListener("click", () => {
+      const theme = opt.getAttribute("data-theme");
+      applyTheme(theme);
+      themeMenu.classList.remove("show");
+      themeBtn.setAttribute("aria-expanded", "false");
+      showToast(`🎨 Tema değiştirildi: ${opt.querySelector("span:last-child").textContent}`, "info");
+    });
   });
 
   // Oyuncu Adı Değişimi
