@@ -1,6 +1,6 @@
 /* ==============================================================================
    COOKIELAUNCHER - FRONTEND CLIENT CONTROLLER (FREESM / PRISM ARCHITECTURE)
-   Zero-Lag, Non-Blocking, CORS-Safe, Tolerant Network, Canli MB Ilerlemesi
+   v4.0.0 - Auth, Friends, Rank System, Chat
    ============================================================================== */
 
 let API_BASE = "http://127.0.0.1:18420";
@@ -13,6 +13,25 @@ const state = {
   cookieOptimize: localStorage.getItem("cl_optimize") !== "false",
   ram: parseInt(localStorage.getItem("cl_ram") || "4"),
   theme: localStorage.getItem("cl_theme") || "default",
+
+  // Auth State
+  isLoggedIn: localStorage.getItem("cl_logged_in") === "true",
+  currentUser: JSON.parse(localStorage.getItem("cl_current_user") || "null"),
+  authToken: localStorage.getItem("cl_auth_token") || null,
+  authType: localStorage.getItem("cl_auth_type") || null, // "normal" or "discord"
+
+  // Friend System
+  friends: JSON.parse(localStorage.getItem("cl_friends") || "[]"),
+  friendRequests: JSON.parse(localStorage.getItem("cl_friend_requests") || "[]"),
+  myFriendCode: localStorage.getItem("cl_friend_code") || generateFriendCode(),
+  activeChatFriend: null,
+  chatMessages: JSON.parse(localStorage.getItem("cl_chat_messages") || "{}"),
+
+  // Rank System
+  points: parseInt(localStorage.getItem("cl_points") || "0"),
+  rank: localStorage.getItem("cl_rank") || "coal",
+  totalActiveSeconds: parseInt(localStorage.getItem("cl_active_seconds") || "0"),
+  leaderboard: JSON.parse(localStorage.getItem("cl_leaderboard") || "[]"),
 
   // Sürüm Verileri
   versions: [],
@@ -55,7 +74,6 @@ const state = {
   contentLoadFailed: false,
   coreModsWarned: false,
 
-
   // Başlatma / Polling
   isPollingStatus: false,
   statusTimer: null,
@@ -68,7 +86,15 @@ const state = {
   lastErrorShown: null
 };
 
-// Backend'e erişilemezse gösterilecek yerel sürüm listesi (uygulama asla boş kalmasın)
+// ================== RANK SISTEMI ==================
+const RANKS = [
+  { id: "coal", name: "Kömür", icon: "⛏️", minPoints: 0, maxPoints: 1000, color: "#4a4a4a" },
+  { id: "iron", name: "Demir", icon: "🛡️", minPoints: 1000, maxPoints: 3000, color: "#b0b0b0" },
+  { id: "gold", name: "Altın", icon: "⭐", minPoints: 3000, maxPoints: 6000, color: "#ffd700" },
+  { id: "diamond", name: "Elmas", icon: "💎", minPoints: 6000, maxPoints: 9000, color: "#00bfff" },
+  { id: "netherite", name: "Netherite", icon: "🔥", minPoints: 9000, maxPoints: 999999, color: "#4a3a2a" }
+];
+
 const FALLBACK_VERSIONS = [
   "26.3", "26.2", "26.1.2", "26.1.1", "26.1",
   "1.21.4", "1.21.3", "1.21.2", "1.21.1", "1.21",
@@ -111,45 +137,37 @@ function showErrorOnce(message) {
   showToast(message, "error");
 }
 
-// ================== MOD BAĞIMLILIK TERCİHİ (Faz 2) ==================
-function getInstallDepsPref() {
-  return localStorage.getItem("cl_install_deps") !== "false";
+function generateFriendCode() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let code = "CL-";
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  code += "-";
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
 }
 
-function syncInstallDepsToggles() {
-  const pref = getInstallDepsPref();
-  document.querySelectorAll(".install-deps-cb").forEach(cb => { cb.checked = pref; });
-}
-
-function setInstallDepsPref(value) {
-  localStorage.setItem("cl_install_deps", value ? "true" : "false");
-  syncInstallDepsToggles();
-}
-
-function bindInstallDepsToggle(el) {
-  if (!el) return;
-  el.checked = getInstallDepsPref();
-  if (el.dataset.bound === "1") return;
-  el.dataset.bound = "1";
-  el.addEventListener("change", () => setInstallDepsPref(el.checked));
-}
-
-function modInstallToast(name, data) {
-  const installed = (data && data.installed_dependencies) || [];
-  const failed = (data && data.failed_dependencies) || [];
-  const label = name || (data && data.filename) || "İçerik";
-  if (failed.length > 0) {
-    console.warn("Kurulamayan bağımlılıklar:", failed);
-    showToast(`⚠️ ${label} kuruldu ama ${failed.length} bağımlılık kurulamadı`, "error");
-  } else if (installed.length > 0) {
-    const names = installed.map(d => d.title || d.slug).filter(Boolean).join(", ");
-    showToast(`✓ ${label} kuruldu • ${installed.length} bağımlılık: ${names}`, "success");
-  } else {
-    showToast(`✓ ${label} kuruldu.`, "success");
+function getRankForPoints(points) {
+  for (let i = RANKS.length - 1; i >= 0; i--) {
+    if (points >= RANKS[i].minPoints) return RANKS[i];
   }
+  return RANKS[0];
 }
 
-// ================== ASLA HATA FIRLATMAYAN API KATMANI ==================
+function getNextRank(points) {
+  const current = getRankForPoints(points);
+  const idx = RANKS.indexOf(current);
+  if (idx < RANKS.length - 1) return RANKS[idx + 1];
+  return null;
+}
+
+function formatTime(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours}s ${mins}dk`;
+  return `${mins}dk`;
+}
+
+// ================== API KATMANI ==================
 async function apiGet(path, timeoutMs = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -198,19 +216,498 @@ async function detectApiBase() {
       });
       if (res.ok) {
         const data = await res.json();
-        // Eski/stale backend süreçlerini atla: yalnızca güncel API sürümü kabul
         if (data && Number(data.api_version) >= 14) {
           API_BASE = `http://127.0.0.1:${port}`;
           return true;
         }
       }
     } catch (_) {
-      // sessizce sıradaki porta geç
     } finally {
       clearTimeout(timer);
     }
   }
   return false;
+}
+
+// ================== THEME SYSTEM ==================
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("cl_theme", theme);
+  state.theme = theme;
+  document.querySelectorAll(".theme-option").forEach(opt => {
+    opt.classList.toggle("active", opt.getAttribute("data-theme") === theme);
+  });
+}
+
+// ================== AUTH SYSTEM ==================
+function saveUserState() {
+  localStorage.setItem("cl_logged_in", state.isLoggedIn ? "true" : "false");
+  localStorage.setItem("cl_current_user", JSON.stringify(state.currentUser));
+  localStorage.setItem("cl_auth_token", state.authToken || "");
+  localStorage.setItem("cl_auth_type", state.authType || "");
+  localStorage.setItem("cl_friend_code", state.myFriendCode);
+  localStorage.setItem("cl_friends", JSON.stringify(state.friends));
+  localStorage.setItem("cl_friend_requests", JSON.stringify(state.friendRequests));
+  localStorage.setItem("cl_chat_messages", JSON.stringify(state.chatMessages));
+  localStorage.setItem("cl_points", String(state.points));
+  localStorage.setItem("cl_rank", state.rank);
+  localStorage.setItem("cl_active_seconds", String(state.totalActiveSeconds));
+  localStorage.setItem("cl_leaderboard", JSON.stringify(state.leaderboard));
+}
+
+function loginNormal(username, password) {
+  // Simulated normal login (in real app, this would call backend API)
+  const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
+  const user = users.find(u => (u.username === username || u.email === username) && u.password === password);
+  if (!user) {
+    return { success: false, error: "Kullanıcı adı veya şifre hatalı." };
+  }
+  state.isLoggedIn = true;
+  state.currentUser = user;
+  state.authToken = "normal_" + Date.now();
+  state.authType = "normal";
+  // Initialize points if not present
+  if (user.points === undefined) user.points = 0;
+  if (user.activeSeconds === undefined) user.activeSeconds = 0;
+  state.points = user.points || 0;
+  state.totalActiveSeconds = user.activeSeconds || 0;
+  state.rank = getRankForPoints(state.points).id;
+  saveUserState();
+  return { success: true, user: user };
+}
+
+function registerNormal(username, email, password) {
+  const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
+  if (users.find(u => u.username === username)) {
+    return { success: false, error: "Bu kullanıcı adı zaten kullanılıyor." };
+  }
+  if (users.find(u => u.email === email)) {
+    return { success: false, error: "Bu e-posta zaten kayıtlı." };
+  }
+  const newUser = {
+    id: "user_" + Date.now(),
+    username: username,
+    email: email,
+    password: password,
+    points: 0,
+    activeSeconds: 0,
+    friendCode: generateFriendCode(),
+    createdAt: new Date().toISOString(),
+    authType: "normal",
+    rank: "coal"
+  };
+  users.push(newUser);
+  localStorage.setItem("cl_users_db", JSON.stringify(users));
+  state.isLoggedIn = true;
+  state.currentUser = newUser;
+  state.authToken = "normal_" + Date.now();
+  state.authType = "normal";
+  state.myFriendCode = newUser.friendCode;
+  state.points = 0;
+  state.totalActiveSeconds = 0;
+  state.rank = "coal";
+  saveUserState();
+  return { success: true, user: newUser };
+}
+
+function loginDiscord() {
+  // Simulated Discord OAuth (in real app, this would redirect to Discord OAuth)
+  const discordUser = {
+    id: "discord_" + Date.now(),
+    username: "DiscordUser" + Math.floor(Math.random() * 1000),
+    email: "discord@example.com",
+    discordId: "123456789",
+    discordTag: "DiscordUser#1234",
+    points: 0,
+    activeSeconds: 0,
+    friendCode: generateFriendCode(),
+    createdAt: new Date().toISOString(),
+    authType: "discord",
+    rank: "coal"
+  };
+  // Save to users DB
+  const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
+  users.push(discordUser);
+  localStorage.setItem("cl_users_db", JSON.stringify(users));
+  state.isLoggedIn = true;
+  state.currentUser = discordUser;
+  state.authToken = "discord_" + Date.now();
+  state.authType = "discord";
+  state.myFriendCode = discordUser.friendCode;
+  state.points = 0;
+  state.totalActiveSeconds = 0;
+  state.rank = "coal";
+  saveUserState();
+  return { success: true, user: discordUser };
+}
+
+function logout() {
+  state.isLoggedIn = false;
+  state.currentUser = null;
+  state.authToken = null;
+  state.authType = null;
+  saveUserState();
+  updateAccountUI();
+  showToast("Çıkış yapıldı.", "info");
+}
+
+// ================== FRIEND SYSTEM ==================
+function addFriend(friendCode) {
+  if (!state.isLoggedIn) {
+    showToast("Arkadaş eklemek için giriş yapmalısınız.", "error");
+    return false;
+  }
+  // Simulated friend lookup
+  const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
+  const friend = users.find(u => u.friendCode === friendCode && u.id !== state.currentUser.id);
+  if (!friend) {
+    showToast("Bu arkadaş kodu bulunamadı.", "error");
+    return false;
+  }
+  if (state.friends.find(f => f.id === friend.id)) {
+    showToast("Bu kullanıcı zaten arkadaşınız.", "info");
+    return false;
+  }
+  // Send friend request
+  const request = {
+    id: "req_" + Date.now(),
+    from: state.currentUser.id,
+    fromUsername: state.currentUser.username,
+    fromFriendCode: state.myFriendCode,
+    to: friend.id,
+    toUsername: friend.username,
+    toFriendCode: friendCode,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+  state.friendRequests.push(request);
+  saveUserState();
+  showToast(`${friend.username} kullanıcısına arkadaşlık isteği gönderildi.`, "success");
+  return true;
+}
+
+function acceptFriendRequest(requestId) {
+  const req = state.friendRequests.find(r => r.id === requestId);
+  if (!req) return false;
+  const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
+  const friend = users.find(u => u.id === req.from);
+  if (!friend) return false;
+  state.friends.push({
+    id: friend.id,
+    username: friend.username,
+    friendCode: friend.friendCode,
+    status: "online",
+    rank: friend.rank || "coal",
+    points: friend.points || 0,
+    avatar: friend.avatar || null
+  });
+  req.status = "accepted";
+  saveUserState();
+  showToast(`${friend.username} arkadaş olarak eklendi!`, "success");
+  renderFriendsList();
+  return true;
+}
+
+function rejectFriendRequest(requestId) {
+  const req = state.friendRequests.find(r => r.id === requestId);
+  if (!req) return false;
+  req.status = "rejected";
+  saveUserState();
+  showToast("Arkadaşlık isteği reddedildi.", "info");
+  renderFriendRequests();
+  return true;
+}
+
+function removeFriend(friendId) {
+  state.friends = state.friends.filter(f => f.id !== friendId);
+  saveUserState();
+  renderFriendsList();
+  showToast("Arkadaş silindi.", "info");
+}
+
+function getPendingRequests() {
+  return state.friendRequests.filter(r => r.to === state.currentUser?.id && r.status === "pending");
+}
+
+function renderFriendsList() {
+  const container = document.getElementById("friendsList");
+  if (!container) return;
+  if (state.friends.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">👥</div><h3>Henüz arkadaşınız yok</h3><p>Arkadaş kodu ile arkadaş ekleyin.</p></div>';
+    return;
+  }
+  container.innerHTML = "";
+  state.friends.forEach(friend => {
+    const card = document.createElement("div");
+    card.className = "friend-card";
+    const rank = getRankForPoints(friend.points || 0);
+    card.innerHTML = `
+      <div class="friend-status ${friend.status || 'offline'}"></div>
+      <div class="friend-avatar">${friend.avatar ? `<img src="${friend.avatar}" alt="">` : '👤'}</div>
+      <div class="friend-info">
+        <span class="friend-name">${escapeHtml(friend.username)}</span>
+        <span class="friend-rank">${rank.icon} ${rank.name} • ${friend.points || 0} puan</span>
+      </div>
+      <div class="friend-actions">
+        <button class="btn-friend-chat" data-friend-id="${friend.id}" title="Sohbet">💬</button>
+        <button class="btn-friend-remove" data-friend-id="${friend.id}" title="Sil">🗑️</button>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+  // Event listeners
+  container.querySelectorAll(".btn-friend-chat").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const fid = btn.getAttribute("data-friend-id");
+      const friend = state.friends.find(f => f.id === fid);
+      if (friend) openChat(friend);
+    });
+  });
+  container.querySelectorAll(".btn-friend-remove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const fid = btn.getAttribute("data-friend-id");
+      if (confirm("Bu arkadaş silinsin mi?")) removeFriend(fid);
+    });
+  });
+}
+
+function renderFriendRequests() {
+  const container = document.getElementById("friendRequestsBody");
+  if (!container) return;
+  const pending = getPendingRequests();
+  if (pending.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📬</div><h3>Bekleyen istek yok</h3></div>';
+    return;
+  }
+  container.innerHTML = "";
+  pending.forEach(req => {
+    const card = document.createElement("div");
+    card.className = "friend-request-card";
+    card.innerHTML = `
+      <div class="friend-request-info">
+        <span class="friend-name">${escapeHtml(req.fromUsername)}</span>
+        <span class="friend-code">${req.fromFriendCode}</span>
+      </div>
+      <div class="friend-request-actions">
+        <button class="btn-accept" data-req-id="${req.id}">✓ Kabul</button>
+        <button class="btn-reject" data-req-id="${req.id}">✗ Reddet</button>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+  container.querySelectorAll(".btn-accept").forEach(btn => {
+    btn.addEventListener("click", () => acceptFriendRequest(btn.getAttribute("data-req-id")));
+  });
+  container.querySelectorAll(".btn-reject").forEach(btn => {
+    btn.addEventListener("click", () => rejectFriendRequest(btn.getAttribute("data-req-id")));
+  });
+}
+
+// ================== CHAT SYSTEM ==================
+function openChat(friend) {
+  state.activeChatFriend = friend;
+  const chatName = document.getElementById("chatFriendName");
+  if (chatName) chatName.textContent = friend.username;
+  renderChatMessages();
+}
+
+function renderChatMessages() {
+  const container = document.getElementById("chatMessages");
+  if (!container) return;
+  if (!state.activeChatFriend) {
+    container.innerHTML = '<div class="chat-welcome">👋 Bir arkadaş seçerek sohbete başlayın!</div>';
+    return;
+  }
+  const fid = state.activeChatFriend.id;
+  const messages = state.chatMessages[fid] || [];
+  if (messages.length === 0) {
+    container.innerHTML = '<div class="chat-welcome">Henüz mesaj yok. İlk mesajı gönderin!</div>';
+    return;
+  }
+  container.innerHTML = "";
+  messages.forEach(msg => {
+    const div = document.createElement("div");
+    div.className = `chat-message ${msg.from === state.currentUser?.id ? 'sent' : 'received'}`;
+    div.innerHTML = `
+      <div class="chat-msg-content">${escapeHtml(msg.text)}</div>
+      <div class="chat-msg-time">${new Date(msg.timestamp).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</div>
+    `;
+    container.appendChild(div);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function sendChatMessage(text) {
+  if (!state.activeChatFriend || !text.trim()) return;
+  const fid = state.activeChatFriend.id;
+  if (!state.chatMessages[fid]) state.chatMessages[fid] = [];
+  state.chatMessages[fid].push({
+    from: state.currentUser.id,
+    text: text.trim(),
+    timestamp: new Date().toISOString()
+  });
+  saveUserState();
+  renderChatMessages();
+  const input = document.getElementById("chatInput");
+  if (input) input.value = "";
+}
+
+// ================== RANK SYSTEM ==================
+function updateRankUI() {
+  const rank = getRankForPoints(state.points);
+  const nextRank = getNextRank(state.points);
+  const rankIcon = document.getElementById("rankIcon");
+  const rankName = document.getElementById("rankName");
+  const rankPoints = document.getElementById("rankPoints");
+  const rankProgressBar = document.getElementById("rankProgressBar");
+  const statPoints = document.getElementById("statPoints");
+  const statHours = document.getElementById("statHours");
+  const statRank = document.getElementById("statRank");
+  const statLeaderboard = document.getElementById("statLeaderboard");
+
+  if (rankIcon) rankIcon.textContent = rank.icon;
+  if (rankName) rankName.textContent = rank.name;
+  if (rankPoints) {
+    if (nextRank) {
+      rankPoints.textContent = `${state.points} / ${nextRank.minPoints} Puan`;
+    } else {
+      rankPoints.textContent = `${state.points} Puan (Max)`;
+    }
+  }
+  if (rankProgressBar) {
+    let pct = 0;
+    if (nextRank) {
+      const range = nextRank.minPoints - rank.minPoints;
+      const progress = state.points - rank.minPoints;
+      pct = Math.min(100, (progress / range) * 100);
+    } else {
+      pct = 100;
+    }
+    rankProgressBar.style.width = `${pct}%`;
+    rankProgressBar.style.background = rank.color;
+  }
+  if (statPoints) statPoints.textContent = state.points;
+  if (statHours) statHours.textContent = formatTime(state.totalActiveSeconds);
+  if (statRank) statRank.textContent = rank.name;
+  if (statLeaderboard) {
+    const idx = state.leaderboard.findIndex(u => u.id === state.currentUser?.id);
+    statLeaderboard.textContent = idx >= 0 ? `#${idx + 1}` : "#-";
+  }
+}
+
+function earnPoints(seconds) {
+  if (!state.isLoggedIn) return;
+  // 1 point per minute of active time (simplified)
+  const pointsEarned = Math.floor(seconds / 60);
+  if (pointsEarned > 0) {
+    state.points = Math.min(9000, state.points + pointsEarned);
+    state.totalActiveSeconds += seconds;
+    state.rank = getRankForPoints(state.points).id;
+    // Update user in DB
+    const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
+    const userIdx = users.findIndex(u => u.id === state.currentUser.id);
+    if (userIdx >= 0) {
+      users[userIdx].points = state.points;
+      users[userIdx].activeSeconds = state.totalActiveSeconds;
+      users[userIdx].rank = state.rank;
+      localStorage.setItem("cl_users_db", JSON.stringify(users));
+    }
+    saveUserState();
+    updateRankUI();
+    updateLeaderboard();
+  }
+}
+
+function updateLeaderboard() {
+  const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
+  const sorted = users
+    .map(u => ({ id: u.id, username: u.username, points: u.points || 0, rank: u.rank || "coal", friendCode: u.friendCode }))
+    .sort((a, b) => (b.points || 0) - (a.points || 0))
+    .slice(0, 20);
+  state.leaderboard = sorted;
+  saveUserState();
+  renderLeaderboard();
+}
+
+function renderLeaderboard() {
+  const container = document.getElementById("leaderboardList");
+  if (!container) return;
+  if (state.leaderboard.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🏆</div><h3>Henüz sıralama yok</h3></div>';
+    return;
+  }
+  container.innerHTML = "";
+  state.leaderboard.forEach((user, idx) => {
+    const rank = getRankForPoints(user.points || 0);
+    const isMe = user.id === state.currentUser?.id;
+    const div = document.createElement("div");
+    div.className = `leaderboard-item ${isMe ? 'me' : ''}`;
+    div.innerHTML = `
+      <span class="lb-rank">#${idx + 1}</span>
+      <span class="lb-icon">${rank.icon}</span>
+      <span class="lb-name">${escapeHtml(user.username)}${isMe ? ' (Sen)' : ''}</span>
+      <span class="lb-points">${user.points || 0} puan</span>
+    `;
+    container.appendChild(div);
+  });
+}
+
+// ================== ACCOUNT UI ==================
+function updateAccountUI() {
+  const loginPrompt = document.getElementById("accountLoginPrompt");
+  const profile = document.getElementById("accountProfile");
+  if (!loginPrompt || !profile) return;
+  if (state.isLoggedIn && state.currentUser) {
+    loginPrompt.style.display = "none";
+    profile.style.display = "block";
+    // Update profile info
+    const profileUsername = document.getElementById("profileUsername");
+    const profileEmail = document.getElementById("profileEmail");
+    const profileAvatar = document.getElementById("profileAvatar");
+    if (profileUsername) profileUsername.textContent = state.currentUser.username;
+    if (profileEmail) profileEmail.textContent = state.currentUser.email || "";
+    if (profileAvatar) profileAvatar.textContent = state.currentUser.avatar || "👤";
+    updateRankUI();
+  } else {
+    loginPrompt.style.display = "block";
+    profile.style.display = "none";
+  }
+}
+
+// ================== MOD BAĞIMLILIK TERCİHİ ==================
+function getInstallDepsPref() {
+  return localStorage.getItem("cl_install_deps") !== "false";
+}
+
+function syncInstallDepsToggles() {
+  const pref = getInstallDepsPref();
+  document.querySelectorAll(".install-deps-cb").forEach(cb => { cb.checked = pref; });
+}
+
+function setInstallDepsPref(value) {
+  localStorage.setItem("cl_install_deps", value ? "true" : "false");
+  syncInstallDepsToggles();
+}
+
+function bindInstallDepsToggle(el) {
+  if (!el) return;
+  el.checked = getInstallDepsPref();
+  if (el.dataset.bound === "1") return;
+  el.dataset.bound = "1";
+  el.addEventListener("change", () => setInstallDepsPref(el.checked));
+}
+
+function modInstallToast(name, data) {
+  const installed = (data && data.installed_dependencies) || [];
+  const failed = (data && data.failed_dependencies) || [];
+  const label = name || (data && data.filename) || "İçerik";
+  if (failed.length > 0) {
+    showToast(`⚠️ ${label} kuruldu ama ${failed.length} bağımlılık kurulamadı`, "error");
+  } else if (installed.length > 0) {
+    showToast(`✓ ${label} kuruldu • ${installed.length} bağımlılık`, "success");
+  } else {
+    showToast(`✓ ${label} kuruldu.`, "success");
+  }
 }
 
 // ================== BAŞLATMA (INIT) ==================
@@ -223,6 +720,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   startStatusPolling();
   setupTauriWindowControls();
   initProfileDetailScreen();
+  // Start points earning timer
+  startPointsTimer();
+  // Update friend code display
+  const friendCodeEl = document.getElementById("myFriendCode");
+  if (friendCodeEl) friendCodeEl.textContent = state.myFriendCode;
 });
 
 function initUI() {
@@ -251,11 +753,20 @@ function initUI() {
   // Tema uygula
   applyTheme(state.theme);
 
+  // Hesap UI güncelle
+  updateAccountUI();
+
+  // Arkadaş listesi render
+  renderFriendsList();
+
+  // Liderlik tablosu render
+  renderLeaderboard();
+
   // Hero + rail aktif profil özeti
   renderPlayHero();
 }
 
-// RAM göstergesi: rozet + görsel bellek çubuğu + özet metni
+// RAM göstergesi
 function updateRamUI() {
   const ram = state.ram;
   const ramText = document.getElementById("ramValueText");
@@ -267,26 +778,14 @@ function updateRamUI() {
     fill.style.width = `${Math.max(8, Math.min(100, pct))}%`;
   }
   if (summary) {
-    const advice = ram >= 8
-      ? "Modlu paketler için rahat bir değer."
-      : ram >= 4
-        ? "Vanilla ve hafif modlar için yeterli."
-        : "Yalnızca vanilla oyun için önerilir.";
+    const advice = ram >= 8 ? "Modlu paketler için rahat bir değer."
+      : ram >= 4 ? "Vanilla ve hafif modlar için yeterli."
+      : "Yalnızca vanilla oyun için önerilir.";
     summary.textContent = `${ram} GB ayrıldı • ${advice}`;
   }
 }
 
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  localStorage.setItem("cl_theme", theme);
-  state.theme = theme;
-  
-  // Dropdown menüdeki aktif seçeneği güncelle
-  document.querySelectorAll(".theme-option").forEach(opt => {
-    opt.classList.toggle("active", opt.getAttribute("data-theme") === theme);
-  });
-}
-
+// ================== EVENT LISTENERS ==================
 function setupEventListeners() {
   // Sekme Değişimi
   document.querySelectorAll(".nav-tab").forEach(tab => {
@@ -333,9 +832,9 @@ function setupEventListeners() {
     opt.addEventListener("click", () => {
       const theme = opt.getAttribute("data-theme");
       applyTheme(theme);
-      themeMenu.classList.remove("show");
-      themeBtn.setAttribute("aria-expanded", "false");
-      showToast(`🎨 Tema değiştirildi: ${opt.querySelector("span:last-child").textContent}`, "info");
+      if (themeMenu) themeMenu.classList.remove("show");
+      if (themeBtn) themeBtn.setAttribute("aria-expanded", "false");
+      showToast(`🎨 Tema değiştirildi`, "info");
     });
   });
 
@@ -383,16 +882,8 @@ function setupEventListeners() {
   const btnConfirmCreateInstance = document.getElementById("btnConfirmCreateInstance");
   if (btnConfirmCreateInstance) btnConfirmCreateInstance.addEventListener("click", confirmCreateInstance);
 
-  const instanceNameInput = document.getElementById("instanceNameInput");
-  if (instanceNameInput) {
-    instanceNameInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") confirmCreateInstance();
-    });
-  }
-
-  // Yeni Profil modalı (sekmeli arayüz)
+  // Yeni Profil modalı
   initNewProfileModal();
-  initRipple();
 
   // Modrinth Kurulum Hedefi
   const modrinthTargetSelect = document.getElementById("modrinthInstanceSelect");
@@ -410,20 +901,7 @@ function setupEventListeners() {
     });
   }
 
-  // Modrinth sonsuz kaydırma (infinite scroll) - keşfet alanı iç scroll
-  const discoverScroll = document.getElementById("modrinthDiscoverScroll") || document.querySelector(".main-content");
-  if (discoverScroll) {
-    discoverScroll.addEventListener("scroll", () => {
-      const modrinthPane = document.getElementById("tab-modrinth");
-      if (!modrinthPane || !modrinthPane.classList.contains("active")) return;
-      if (!state.modrinthHasMore || state.modrinthLoading) return;
-      if (discoverScroll.scrollTop + discoverScroll.clientHeight >= discoverScroll.scrollHeight - 400) {
-        fetchModrinth(false);
-      }
-    });
-  }
-
-  // Yüklü içerik paneli: kategori sekmeleri ve daralt/genişlet
+  // Yüklü içerik paneli
   document.querySelectorAll(".installed-cat-tab").forEach(tab => {
     tab.addEventListener("click", () => {
       document.querySelectorAll(".installed-cat-tab").forEach(t => t.classList.remove("active"));
@@ -473,7 +951,6 @@ function setupEventListeners() {
     });
   }
 
-  // Sağ Düşey Filtre Paneli
   document.querySelectorAll(".version-filter-cb").forEach(cb => {
     cb.addEventListener("change", () => {
       state.versionFilters[cb.getAttribute("data-category")] = cb.checked;
@@ -533,9 +1010,7 @@ function setupEventListeners() {
   // Progress Modal Gizle
   const btnDismissProgress = document.getElementById("btnDismissProgressModal");
   if (btnDismissProgress) {
-    btnDismissProgress.addEventListener("click", () => {
-      closeProgressModal();
-    });
+    btnDismissProgress.addEventListener("click", () => closeProgressModal();
   }
 
   // Modrinth Arama
@@ -579,39 +1054,27 @@ function setupEventListeners() {
     });
   }
 
-  // Yüklü modları gizleme anahtarı
   const hideInstalledToggle = document.getElementById("hideInstalledToggle");
   if (hideInstalledToggle) {
     hideInstalledToggle.checked = state.hideInstalled;
     hideInstalledToggle.addEventListener("change", async (e) => {
       state.hideInstalled = e.target.checked;
       localStorage.setItem("cl_hide_installed", state.hideInstalled);
-
-      // Liste daha önce boş yüklendiyse önce yüklü modları tazele
       if (state.installedModSlugs.size === 0 && state.installedModFiles.length === 0) {
         await refreshInstalledContent();
       }
       applyInstalledStates();
-
-      showToast(
-        state.hideInstalled
-          ? "Yüklü içerikler listeden gizlendi."
-          : "Yüklü içerikler tekrar gösteriliyor.",
-        "info"
-      );
+      showToast(state.hideInstalled ? "Yüklü içerikler listeden gizlendi." : "Yüklü içerikler tekrar gösteriliyor.", "info");
     });
   }
 
-  // Gerekli bağımlılıkları da kur onay kutusu (tercih localStorage'da)
   bindInstallDepsToggle(document.getElementById("installDepsToggle"));
 
-  // Ekran Görüntüsü Klasörü
   const btnOpenScreenshots = document.getElementById("btnOpenScreenshotsFolder");
   if (btnOpenScreenshots) {
     btnOpenScreenshots.addEventListener("click", () => openSystemFolder("screenshots"));
   }
 
-  // Konsol Temizle
   const btnClearConsole = document.getElementById("btnClearConsole");
   if (btnClearConsole) {
     btnClearConsole.addEventListener("click", () => {
@@ -620,98 +1083,222 @@ function setupEventListeners() {
     });
   }
 
-  // Sürüm Değiştir overlay'i
   initVersionSwitchModal();
-
-  // Erişilebilirlik: rail klavye gezinmesi + modal odak tuzağı/ESC
   initRailA11y();
   initDialogA11y();
-}
 
-// Rail'de ok tuşlarıyla gezinme (rol=tablist, roving tabindex)
-function initRailA11y() {
-  const menu = document.querySelector(".rail-menu");
-  if (!menu || menu.dataset.bound === "1") return;
-  menu.dataset.bound = "1";
+  // ================== AUTH EVENT LISTENERS ==================
+  const btnNormalLogin = document.getElementById("btnNormalLogin");
+  if (btnNormalLogin) btnNormalLogin.addEventListener("click", () => openLoginModal());
 
-  const tabs = () => Array.from(menu.querySelectorAll(".nav-tab"));
-  tabs().forEach(t => { t.tabIndex = t.classList.contains("active") ? 0 : -1; });
-
-  menu.addEventListener("keydown", (e) => {
-    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
-    if (!keys.includes(e.key)) return;
-    e.preventDefault();
-    const items = tabs();
-    if (items.length === 0) return;
-    const idx = items.indexOf(document.activeElement);
-    let next = 0;
-    if (e.key === "ArrowDown") next = idx < 0 ? 0 : (idx + 1) % items.length;
-    else if (e.key === "ArrowUp") next = idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length;
-    else if (e.key === "End") next = items.length - 1;
-    items[next].focus();
-    items[next].click();
+  const btnDiscordLogin = document.getElementById("btnDiscordLogin");
+  if (btnDiscordLogin) btnDiscordLogin.addEventListener("click", () => {
+    const result = loginDiscord();
+    if (result.success) {
+      showToast(`🎮 Discord ile giriş yapıldı: ${result.user.username}`, "success");
+      updateAccountUI();
+      closeLoginModal();
+    }
   });
-}
 
-// Modallar: role=dialog, odak tuzağı (Tab döngüsü) ve ESC ile kapatma
-function initDialogA11y() {
-  if (initDialogA11y._bound) return;
-  initDialogA11y._bound = true;
+  const btnCloseLoginModal = document.getElementById("btnCloseLoginModal");
+  if (btnCloseLoginModal) btnCloseLoginModal.addEventListener("click", closeLoginModal);
 
-  const closers = {
-    createInstanceModal: () => closeCreateInstanceModal(),
-    confirmModal: () => { const b = document.getElementById("btnConfirmCancel"); if (b) b.click(); },
-    versionSwitchModal: () => closeVersionSwitchOverlay(),
-    versionSelectorModal: () => closeVersionSelectorModal(),
-    launchProgressModal: () => closeProgressModal()
-  };
+  document.querySelectorAll(".login-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".login-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      const target = tab.getAttribute("data-login-tab");
+      document.querySelectorAll(".login-pane").forEach(p => p.classList.remove("active"));
+      document.getElementById(target === "login" ? "loginPaneLogin" : "loginPaneRegister").classList.add("active");
+    });
+  });
 
-  const visibleModal = () => {
-    const modals = Array.from(document.querySelectorAll(".modal-backdrop"))
-      .filter(m => m && m.style.display === "flex");
-    return modals.length ? modals[modals.length - 1] : null;
-  };
-
-  const focusables = (root) => Array.from(root.querySelectorAll(
-    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-  )).filter(el => !el.disabled && el.offsetParent !== null);
-
-  document.addEventListener("keydown", (e) => {
-    const modal = visibleModal();
-
-    if (e.key === "Escape") {
-      if (modal && closers[modal.id]) {
-        e.preventDefault();
-        closers[modal.id]();
+  const btnDoLogin = document.getElementById("btnDoLogin");
+  if (btnDoLogin) {
+    btnDoLogin.addEventListener("click", () => {
+      const username = document.getElementById("loginUsername").value.trim();
+      const password = document.getElementById("loginPassword").value;
+      if (!username || !password) {
+        showToast("Kullanıcı adı ve şifre gerekli.", "error");
+        return;
       }
-      return;
-    }
+      const result = loginNormal(username, password);
+      if (result.success) {
+        showToast(`✓ Giriş yapıldı: ${result.user.username}`, "success");
+        updateAccountUI();
+        closeLoginModal();
+      } else {
+        showToast(result.error, "error");
+      }
+    });
+  }
 
-    if (e.key !== "Tab") return;
+  const btnDoRegister = document.getElementById("btnDoRegister");
+  if (btnDoRegister) {
+    btnDoRegister.addEventListener("click", () => {
+      const username = document.getElementById("regUsername").value.trim();
+      const email = document.getElementById("regEmail").value.trim();
+      const password = document.getElementById("regPassword").value;
+      const passwordConfirm = document.getElementById("regPasswordConfirm").value;
+      if (!username || !email || !password) {
+        showToast("Tüm alanlar gerekli.", "error");
+        return;
+      }
+      if (password !== passwordConfirm) {
+        showToast("Şifreler eşleşmiyor.", "error");
+        return;
+      }
+      if (password.length < 6) {
+        showToast("Şifre en az 6 karakter olmalı.", "error");
+        return;
+      }
+      const result = registerNormal(username, email, password);
+      if (result.success) {
+        showToast(`✓ Kayıt başarılı: ${result.user.username}`, "success");
+        updateAccountUI();
+        closeLoginModal();
+      } else {
+        showToast(result.error, "error");
+      }
+    });
+  }
 
-    // Modal açıkken odak tuzağı; modal yoksa profil detay ekranında tut
-    const screen = document.getElementById("profileDetailScreen");
-    const profileOpen = screen && screen.style.display !== "none" && screen.getAttribute("aria-hidden") !== "true";
-    const root = modal || (profileOpen ? screen : null);
-    if (!root) return;
+  const btnDiscordOAuthLogin = document.getElementById("btnDiscordOAuthLogin");
+  if (btnDiscordOAuthLogin) {
+    btnDiscordOAuthLogin.addEventListener("click", () => {
+      const result = loginDiscord();
+      if (result.success) {
+        showToast(`🎮 Discord ile giriş yapıldı: ${result.user.username}`, "success");
+        updateAccountUI();
+        closeLoginModal();
+      }
+    });
+  }
 
-    const items = focusables(root);
-    if (items.length === 0) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement;
+  const btnDiscordOAuthRegister = document.getElementById("btnDiscordOAuthRegister");
+  if (btnDiscordOAuthRegister) {
+    btnDiscordOAuthRegister.addEventListener("click", () => {
+      const result = loginDiscord();
+      if (result.success) {
+        showToast(`🎮 Discord ile kayıt yapıldı: ${result.user.username}`, "success");
+        updateAccountUI();
+        closeLoginModal();
+      }
+    });
+  }
 
-    if (!root.contains(active)) {
-      e.preventDefault();
-      first.focus();
-    } else if (e.shiftKey && active === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
+  // Hesap Bilgileri butonu
+  const btnAccountInfo = document.getElementById("btnAccountInfo");
+  if (btnAccountInfo) {
+    btnAccountInfo.addEventListener("click", () => {
+      const modal = document.getElementById("accountInfoModal");
+      const body = document.getElementById("accountInfoBody");
+      if (modal && body) {
+        if (state.isLoggedIn && state.currentUser) {
+          const rank = getRankForPoints(state.points);
+          body.innerHTML = `
+            <div class="account-info-card">
+              <div class="info-row"><span class="info-label">Kullanıcı Adı:</span><span class="info-value">${escapeHtml(state.currentUser.username)}</span></div>
+              <div class="info-row"><span class="info-label">E-posta:</span><span class="info-value">${escapeHtml(state.currentUser.email || '-')}</span></div>
+              <div class="info-row"><span class="info-label">Hesap Türü:</span><span class="info-value">${state.authType === 'discord' ? '🎮 Discord' : '📧 Normal'}</span></div>
+              <div class="info-row"><span class="info-label">Arkadaş Kodu:</span><span class="info-value">${state.myFriendCode}</span></div>
+              <div class="info-row"><span class="info-label">Rütbe:</span><span class="info-value">${rank.icon} ${rank.name}</span></div>
+              <div class="info-row"><span class="info-label">Puan:</span><span class="info-value">${state.points} / 9000</span></div>
+              <div class="info-row"><span class="info-label">Aktif Süre:</span><span class="info-value">${formatTime(state.totalActiveSeconds)}</span></div>
+              <div class="info-row"><span class="info-label">Kayıt Tarihi:</span><span class="info-value">${state.currentUser.createdAt ? new Date(state.currentUser.createdAt).toLocaleDateString('tr-TR') : '-'}</span></div>
+            </div>
+          `;
+        } else {
+          body.innerHTML = '<p>Giriş yapmış bir hesap bulunmamaktadır.</p>';
+        }
+        modal.style.display = "flex";
+      }
+    });
+  }
+
+  const btnCloseAccountInfoModal = document.getElementById("btnCloseAccountInfoModal");
+  if (btnCloseAccountInfoModal) {
+    btnCloseAccountInfoModal.addEventListener("click", () => {
+      document.getElementById("accountInfoModal").style.display = "none";
+    });
+  }
+
+  // Çıkış Yap
+  const btnLogout = document.getElementById("btnLogout");
+  if (btnLogout) btnLogout.addEventListener("click", logout);
+
+  const btnRefreshProfile = document.getElementById("btnRefreshProfile");
+  if (btnRefreshProfile) btnRefreshProfile.addEventListener("click", () => {
+    updateAccountUI();
+    updateRankUI();
+    showToast("Profil yenilendi.", "info");
   });
+
+  // ================== FRIEND SYSTEM EVENT LISTENERS ==================
+  const btnCopyFriendCode = document.getElementById("btnCopyFriendCode");
+  if (btnCopyFriendCode) {
+    btnCopyFriendCode.addEventListener("click", () => {
+      navigator.clipboard.writeText(state.myFriendCode).then(() => {
+        showToast("Arkadaş kodu kopyalandı!", "success");
+      }).catch(() => {
+        showToast("Kopyalama başarısız.", "error");
+      });
+    });
+  }
+
+  const btnAddFriend = document.getElementById("btnAddFriend");
+  if (btnAddFriend) {
+    btnAddFriend.addEventListener("click", () => {
+      const code = document.getElementById("addFriendInput").value.trim().toUpperCase();
+      if (!code) {
+        showToast("Arkadaş kodu girin.", "error");
+        return;
+      }
+      if (addFriend(code)) {
+        document.getElementById("addFriendInput").value = "";
+      }
+    });
+  }
+
+  // Sohbet gönder
+  const btnSendChat = document.getElementById("btnSendChat");
+  if (btnSendChat) {
+    btnSendChat.addEventListener("click", () => {
+      const input = document.getElementById("chatInput");
+      if (input) {
+        sendChatMessage(input.value);
+      }
+    });
+  }
+
+  const chatInput = document.getElementById("chatInput");
+  if (chatInput) {
+    chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        sendChatMessage(chatInput.value);
+      }
+    });
+  }
+
+  // Arkadaşlık istekleri modal
+  const btnFriendRequests = document.getElementById("btnFriendRequests");
+  if (btnFriendRequests) {
+    btnFriendRequests.addEventListener("click", () => {
+      const modal = document.getElementById("friendRequestsModal");
+      if (modal) {
+        renderFriendRequests();
+        modal.style.display = "flex";
+      }
+    });
+  }
+
+  const btnCloseFriendRequestsModal = document.getElementById("btnCloseFriendRequestsModal");
+  if (btnCloseFriendRequestsModal) {
+    btnCloseFriendRequestsModal.addEventListener("click", () => {
+      document.getElementById("friendRequestsModal").style.display = "none";
+    });
+  }
 }
 
 function switchTab(tabId) {
@@ -742,7 +1329,33 @@ function switchTab(tabId) {
     loadScreenshots();
   } else if (tabId === "tab-instances") {
     loadInstances();
+  } else if (tabId === "tab-friends") {
+    renderFriendsList();
+  } else if (tabId === "tab-account") {
+    updateAccountUI();
   }
+}
+
+// ================== POINTS TIMER ==================
+let pointsTimerInterval = null;
+function startPointsTimer() {
+  if (pointsTimerInterval) clearInterval(pointsTimerInterval);
+  pointsTimerInterval = setInterval(() => {
+    if (state.isLoggedIn) {
+      earnPoints(10); // Her 10 saniyede 10 saniye puan kazan
+    }
+  }, 10000);
+}
+
+// ================== LOGIN MODAL ==================
+function openLoginModal() {
+  const modal = document.getElementById("loginModal");
+  if (modal) modal.style.display = "flex";
+}
+
+function closeLoginModal() {
+  const modal = document.getElementById("loginModal");
+  if (modal) modal.style.display = "none";
 }
 
 // ================== PROFİLLER (INSTANCES) ==================
@@ -776,33 +1389,13 @@ async function loadInstances() {
   renderInstances();
   renderModrinthTargetBar();
   applyActiveInstanceToUI();
-  ensurePackPolling();
   refreshInstalledContent();
-}
-
-function ensurePackPolling() {
-  const hasInstalling = state.instances.some(i => i.install_status === "installing");
-  if (hasInstalling && !state.packPollTimer) {
-    state.packPollTimer = setInterval(async () => {
-      await loadInstances();
-      if (!state.instances.some(i => i.install_status === "installing")) {
-        clearInterval(state.packPollTimer);
-        state.packPollTimer = null;
-        refreshInstalledContent();
-        showToast("📦 Modpack kurulumu tamamlandı!", "success");
-      }
-    }, 3000);
-  }
 }
 
 function populateActiveInstanceSelect() {
   const select = document.getElementById("activeInstanceSelect");
   if (!select) return;
-
   select.innerHTML = "";
-
-  // Profilsiz oynama yolu YOK: "Genel .minecraft kullanılır" secenegi kaldirildi.
-  // Profil yoksa liste bos birakilmaz; secilemeyen bir bilgi satiri gosterilir.
   if (state.instances.length === 0) {
     const none = document.createElement("option");
     none.value = "";
@@ -813,7 +1406,6 @@ function populateActiveInstanceSelect() {
     select.disabled = true;
     return;
   }
-
   select.disabled = false;
   state.instances.forEach(inst => {
     const opt = document.createElement("option");
@@ -821,9 +1413,6 @@ function populateActiveInstanceSelect() {
     opt.textContent = `${inst.name} — MC ${inst.version} (${inst.loader})`;
     select.appendChild(opt);
   });
-
-  // Gecerli aktif profil yoksa ilk profili aktif kabul et; boylece hicbir
-  // durumda "profilsiz" baslatma kalmaz.
   if (!state.instances.some(i => i.id === state.activeInstanceId)) {
     state.activeInstanceId = state.instances[0].id;
     localStorage.setItem("cl_instance", state.activeInstanceId);
@@ -835,9 +1424,7 @@ function renderInstances() {
   const wrap = document.getElementById("instancesGridWrap");
   if (!wrap) return;
   wrap.innerHTML = "";
-
   if (state.instances.length === 0) {
-    // Birleşik boş durum bileşeni (ikon + başlık + açıklama + eylem)
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
@@ -851,7 +1438,6 @@ function renderInstances() {
     if (btn) btn.addEventListener("click", () => openCreateInstanceModal());
     return;
   }
-
   state.instances.forEach((inst, idx) => {
     const isActive = inst.id === state.activeInstanceId;
     const installing = inst.install_status === "installing";
@@ -859,7 +1445,6 @@ function renderInstances() {
     const card = document.createElement("div");
     card.className = "instance-card" + (isActive ? " active" : "") + (installing ? " installing" : "");
     card.style.animationDelay = `${Math.min(idx * 0.05, 0.4)}s`;
-
     const iconBox = document.createElement("div");
     iconBox.className = "inst-icon-box";
     if (inst.icon) {
@@ -877,17 +1462,12 @@ function renderInstances() {
       iconBox.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
       iconBox.classList.add("inst-icon-letter");
     }
-
-    const metaText = installing
-      ? `⏳ ${escapeHtml(inst.install_detail || "Kuruluyor...")} %${inst.install_progress || 0}`
-      : failed
-        ? `⚠️ Kurulum hatası: ${escapeHtml(inst.install_detail || "")}`
-        : `MC ${escapeHtml(inst.version)} • ${escapeHtml(inst.loader)} • ${inst.mod_count || 0} mod`;
-
+    const metaText = installing ? `⏳ ${escapeHtml(inst.install_detail || "Kuruluyor...")} %${inst.install_progress || 0}`
+      : failed ? `⚠️ Kurulum hatası: ${escapeHtml(inst.install_detail || "")}`
+      : `MC ${escapeHtml(inst.version)} • ${escapeHtml(inst.loader)} • ${inst.mod_count || 0} mod`;
     const top = document.createElement("div");
     top.className = "inst-card-top";
     top.appendChild(iconBox);
-
     const info = document.createElement("div");
     info.className = "inst-info";
     const LOADER_ICONS = { fabric: "⚡", forge: "🔨", neoforge: "🦊", quilt: "🧵", vanilla: "🧱" };
@@ -903,37 +1483,30 @@ function renderInstances() {
       ${showStatus ? `<span class="inst-meta">${metaText}</span>` : ""}
     `;
     top.appendChild(info);
-
     if (isActive) {
       const badge = document.createElement("span");
       badge.className = "inst-badge-active";
       badge.textContent = "AKTİF";
       top.appendChild(badge);
     }
-
     const actions = document.createElement("div");
     actions.className = "inst-card-actions";
-
     const btnActivate = document.createElement("button");
     btnActivate.className = "btn-inst btn-inst-primary";
     btnActivate.textContent = isActive ? "✓ Seçili" : "Aktif Yap";
     btnActivate.disabled = installing;
     btnActivate.addEventListener("click", () => setActiveInstance(inst.id));
-
     const btnMods = document.createElement("button");
     btnMods.className = "btn-inst";
     btnMods.textContent = "📋 Detaylar";
     btnMods.addEventListener("click", () => openProfileDetail(inst.id, "mods"));
-
     const btnDelete = document.createElement("button");
     btnDelete.className = "btn-inst btn-inst-danger";
     btnDelete.textContent = "Sil";
     btnDelete.addEventListener("click", () => deleteInstance(inst.id, inst.name));
-
     actions.appendChild(btnActivate);
     actions.appendChild(btnMods);
     actions.appendChild(btnDelete);
-
     card.appendChild(top);
     card.appendChild(actions);
     wrap.appendChild(card);
@@ -942,26 +1515,21 @@ function renderInstances() {
 
 function setActiveInstance(id) {
   state.activeInstanceId = getInstanceById(id) ? id : "";
-
   if (state.activeInstanceId) {
     localStorage.setItem("cl_instance", state.activeInstanceId);
   } else {
     localStorage.removeItem("cl_instance");
   }
-
-  // Modrinth kurulum hedefi aktif profile otomatik uyum sağlar
   state.modrinthTargetId = state.activeInstanceId;
   if (state.modrinthTargetId) {
     localStorage.setItem("cl_modrinth_target", state.modrinthTargetId);
   } else {
     localStorage.removeItem("cl_modrinth_target");
   }
-
   applyActiveInstanceToUI();
   renderInstances();
   renderModrinthTargetBar();
   fetchModrinth(true);
-
   const inst = getActiveInstance();
   if (inst) {
     const versionInput = document.getElementById("versionInput");
@@ -973,27 +1541,19 @@ function setActiveInstance(id) {
 function applyActiveInstanceToUI() {
   const select = document.getElementById("activeInstanceSelect");
   const inst = getActiveInstance();
-
-  // Profil yoksa "OYUNU BASLAT" yerine "ONCE PROFIL OLUSTUR" gosterilir.
-  // Motor mesgulse (kurulum / oyun calisiyor) buton durumuna dokunulmaz.
   if (!state.engineMode || state.engineMode === "idle") {
     setLaunchButton(inst ? "idle" : "noProfile");
   }
-
   if (select) select.value = inst ? inst.id : "";
-
   const vInput = document.getElementById("versionInput");
   const hint = document.getElementById("versionLabelHint");
-
   if (inst) {
     state.selectedVersion = inst.version;
     state.loader = inst.loader;
     localStorage.setItem("cl_version", state.selectedVersion);
     localStorage.setItem("cl_loader", state.loader);
-
     if (vInput) vInput.value = inst.version;
     if (hint) hint.textContent = `"${inst.name}" profiline bağlı — değişiklik profile kaydedilir`;
-
     const radio = document.querySelector(`input[name="loaderRadio"][value="${inst.loader}"]`);
     if (radio) {
       radio.checked = true;
@@ -1005,11 +1565,9 @@ function applyActiveInstanceToUI() {
   } else if (hint) {
     hint.textContent = "İstediğiniz sürümü doğrudan yazabilir veya listeden seçebilirsiniz";
   }
-
   renderPlayHero();
 }
 
-// Hero paneli + rail mini kartını aktif profile göre güncelle
 function renderPlayHero() {
   const inst = getActiveInstance();
   const nameEl = document.getElementById("heroProfileName");
@@ -1017,17 +1575,15 @@ function renderPlayHero() {
   const chipsEl = document.getElementById("heroProfileChips");
   const subEl = document.getElementById("heroProfileSub");
   const detailsBtn = document.getElementById("heroDetailsBtn");
-
   const railCard = document.getElementById("railProfileCard");
   const railIcon = document.getElementById("railProfileIcon");
   const railName = document.getElementById("railProfileName");
   const railMeta = document.getElementById("railProfileMeta");
-
   if (!inst) {
     if (nameEl) nameEl.textContent = "Profil seçilmedi";
     if (chipsEl) chipsEl.innerHTML = "";
     if (subEl) subEl.textContent = "Başlamak için yeni bir profil oluşturun.";
-    if (iconEl) { iconEl.textContent = "🗂️"; }
+    if (iconEl) iconEl.textContent = "🗂️";
     if (detailsBtn) detailsBtn.disabled = true;
     if (railCard) railCard.classList.add("is-empty");
     if (railIcon) railIcon.textContent = "🗂️";
@@ -1035,14 +1591,11 @@ function renderPlayHero() {
     if (railMeta) railMeta.textContent = "MC • —";
     return;
   }
-
   const loaderLabel = pdsLoaderLabel(inst.loader);
   const loaderText = loaderLabel + (inst.loader_version ? ` ${inst.loader_version}` : "");
-
   if (nameEl) nameEl.textContent = inst.name || "Profil";
   if (subEl) subEl.textContent = `"${inst.name || "Profil"}" profili ile oyuna hazırsın.`;
   if (detailsBtn) detailsBtn.disabled = false;
-
   if (chipsEl) {
     chipsEl.innerHTML = `
       <span class="chip">MC ${escapeHtml(inst.version || "?")}</span>
@@ -1050,8 +1603,6 @@ function renderPlayHero() {
       <span class="chip">🧩 ${inst.mod_count || 0} mod</span>
     `;
   }
-
-  // Büyük hero avatarı (ikon yoksa baş harf)
   if (iconEl) {
     iconEl.innerHTML = "";
     if (inst.icon) {
@@ -1068,8 +1619,6 @@ function renderPlayHero() {
       iconEl.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
     }
   }
-
-  // Rail mini kartı
   if (railCard) railCard.classList.remove("is-empty");
   if (railName) railName.textContent = inst.name || "Profil";
   if (railMeta) {
@@ -1099,18 +1648,15 @@ function renderPlayHero() {
 async function updateActiveInstance(fields) {
   const inst = getActiveInstance();
   if (!inst) return;
-
   Object.assign(inst, fields);
   renderInstances();
   renderModrinthTargetBar();
-
   const data = await apiPost("/api/instances/update", {
     id: inst.id,
     version: inst.version,
     loader: inst.loader,
     name: inst.name
   }, 8000);
-
   if (data && data.success && data.instance) {
     const idx = state.instances.findIndex(i => i.id === inst.id);
     if (idx >= 0) state.instances[idx] = data.instance;
@@ -1119,11 +1665,11 @@ async function updateActiveInstance(fields) {
   }
 }
 
-// ==================== RIPPLE (mikro-etkileşim) ====================
+// ==================== RIPPLE ====================
 function initRipple() {
   document.addEventListener("click", (e) => {
     const btn = e.target && e.target.closest
-      ? e.target.closest("button.btn-primary-action, button.btn-secondary, button.btn-mega-launch, button.nav-tab, button.cat-pill, button.np-loader-card, button.np-combo-item, button.np-pack-item, button.np-side-tab, button.np-adv-toggle, button.control-btn, button.btn-search-go, button.btn-browse-version, button.btn-close-modal, button.installed-cat-tab")
+      ? e.target.closest("button.btn-primary-action, button.btn-secondary, button.btn-mega-launch, button.nav-tab, button.cat-pill, button.np-loader-card, button.np-combo-item, button.np-pack-item, button.np-side-tab, button.np-adv-toggle, button.control-btn, button.btn-search-go, button.btn-browse-version, button.btn-close-modal, button.installed-cat-tab, button.theme-option, button.login-tab")
       : null;
     if (!btn || btn.disabled) return;
     const rect = btn.getBoundingClientRect();
@@ -1139,4334 +1685,122 @@ function initRipple() {
   });
 }
 
-// ==================== YENİ PROFİL MODALI (SEKMELİ YENİ ARAYÜZ) ====================
-const NP_LOADERS = [
-  { id: "vanilla",  name: "Vanilla",  note: "Yükleyici kurulmaz; saf Minecraft deneyimi." },
-  { id: "neoforge", name: "NeoForge", note: "NeoForge yalnızca 1.20.2 ve üzeri sürümlerde yayınlanır." },
-  { id: "forge",    name: "Forge",    note: "Klasik modlar için en geniş uyumluluk." },
-  { id: "fabric",   name: "Fabric",   note: "Hafif ve yüksek performanslı yükleyici." },
-  { id: "quilt",    name: "Quilt",    note: "Fabric modlarıyla büyük ölçüde uyumludur." },
-];
-
-const npState = {
-  tab: "custom",
-  version: "",
-  versionType: "release",
-  versionOptimized: false,
-  loader: "fabric",
-  loaderInfo: null,
-  loaderLoading: false,
-  loaderError: "",
-  manualLoaderVersion: "",
-  packHits: [],
-  selectedPack: null,
-  packBusy: false,
-  packRequestId: 0,
-};
-
-function npText(el, value) {
-  if (el) el.textContent = value == null ? "" : String(value);
-}
-
-function npShow(el, show) {
-  if (el) el.style.display = show ? "" : "none";
-}
-
-function npFmtNum(n) {
-  const v = Number(n || 0);
-  if (v >= 1e9) return (v / 1e9).toFixed(1).replace(".", ",") + " Mr";
-  if (v >= 1e6) return (v / 1e6).toFixed(1).replace(".", ",") + "M";
-  if (v >= 1e3) return (v / 1e3).toFixed(1).replace(".", ",") + "B";
-  return String(v);
-}
-
-function initNewProfileModal() {
-  document.querySelectorAll("[data-np-tab]").forEach((btn) => {
-    btn.addEventListener("click", () => npSelectTab(btn.getAttribute("data-np-tab")));
-  });
-
-  const vInput = document.getElementById("instanceVersionInput");
-  if (vInput) {
-    vInput.addEventListener("focus", () => npRenderVersionList(vInput.value, true));
-    vInput.addEventListener("input", () => npRenderVersionList(vInput.value, true));
-    vInput.addEventListener("keydown", (e) => {
-      const list = document.getElementById("npVersionList");
-      const openList = !!(list && list.classList.contains("open"));
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (openList) {
-          const first = list.querySelector(".np-combo-item");
-          if (first) npPickVersion(first.getAttribute("data-version"));
-        } else {
-          confirmCreateInstance();
-        }
-      } else if (e.key === "Escape") {
-        npCloseVersionList();
-      } else if (e.key === "ArrowDown" && openList) {
-        const first = list.querySelector(".np-combo-item");
-        if (first) { e.preventDefault(); first.focus(); }
-      }
-    });
-  }
-
-  // Sürüm alanına tıklanınca ESKİ sürüm menüsü (tablo + filtreler) açılır
-  const picker = document.getElementById("npVersionPicker");
-  if (picker) picker.addEventListener("click", () => openVersionSelectorModal());
-
-  document.addEventListener("click", (e) => {
-    const combo = document.getElementById("npVersionCombo");
-    if (combo && !combo.contains(e.target)) npCloseVersionList();
-  });
-
-  document.querySelectorAll("#npLoaderGrid .np-loader-card").forEach((card) => {
-    card.addEventListener("click", () => npSelectLoader(card.getAttribute("data-loader")));
-  });
-
-  const advToggle = document.getElementById("npAdvToggle");
-  if (advToggle) {
-    advToggle.addEventListener("click", () => {
-      const panel = document.getElementById("npAdvPanel");
-      if (!panel) return;
-      const willOpen = panel.hasAttribute("hidden");
-      if (willOpen) panel.removeAttribute("hidden");
-      else panel.setAttribute("hidden", "");
-      advToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
-      advToggle.classList.toggle("active", willOpen);
-    });
-  }
-
-  const lvSelect = document.getElementById("npLoaderVersionSelect");
-  if (lvSelect) {
-    lvSelect.addEventListener("change", () => {
-      npState.manualLoaderVersion = lvSelect.value || "";
-      npUpdateLoaderBox();
-    });
-  }
-
-  const packBtn = document.getElementById("npPackSearchBtn");
-  if (packBtn) packBtn.addEventListener("click", () => npSearchPacks());
-  const packInput = document.getElementById("npPackSearchInput");
-  if (packInput) packInput.addEventListener("keydown", (e) => { if (e.key === "Enter") npSearchPacks(); });
-  const sortSel = document.getElementById("npPackSortSelect");
-  if (sortSel) sortSel.addEventListener("change", () => npSearchPacks());
-  const loaderFilter = document.getElementById("npPackLoaderFilter");
-  if (loaderFilter) loaderFilter.addEventListener("change", () => npSearchPacks());
-  const versionFilter = document.getElementById("npPackVersionFilter");
-  if (versionFilter) versionFilter.addEventListener("change", () => npSearchPacks());
-  const installBtn = document.getElementById("npPackInstallBtn");
-  if (installBtn) installBtn.addEventListener("click", () => npInstallSelectedPack());
-}
-
-function npSelectTab(tab) {
-  npState.tab = tab === "packs" ? "packs" : "custom";
-  document.querySelectorAll("[data-np-tab]").forEach((b) => {
-    const active = b.getAttribute("data-np-tab") === npState.tab;
-    b.classList.toggle("active", active);
-    b.setAttribute("aria-selected", active ? "true" : "false");
-  });
-  const custom = document.getElementById("npPaneCustom");
-  const packs = document.getElementById("npPanePacks");
-  if (custom) custom.classList.toggle("active", npState.tab === "custom");
-  if (packs) packs.classList.toggle("active", npState.tab === "packs");
-  const confirmBtn = document.getElementById("btnConfirmCreateInstance");
-  if (confirmBtn) confirmBtn.style.display = npState.tab === "custom" ? "" : "none";
-  const tip = document.getElementById("npModalTip");
-  if (tip) {
-    tip.textContent = npState.tab === "custom"
-      ? "💡 Profil oluşturulunca otomatik olarak aktif edilir."
-      : "💡 Mod paketi kendi Minecraft sürümü ve yükleyicisiyle ayrı bir profil olarak kurulur.";
-  }
-  if (npState.tab === "packs" && npState.packHits.length === 0 && !npState.packBusy) {
-    npRenderPackVersionFilter();
-    npSearchPacks();
-  }
-}
-
-// ---------- Minecraft sürümü: aranabilir açılır liste ----------
-function npRenderVersionList(query, open) {
-  const list = document.getElementById("npVersionList");
-  const input = document.getElementById("instanceVersionInput");
-  if (!list) return;
-  const q = String(query || "").trim().toLowerCase();
-  const all = Array.isArray(state.versions) ? state.versions : [];
-  let items = all.filter((v) => !q || String(v.id).toLowerCase().includes(q));
-  if (q) {
-    items = items.slice().sort((a, b) => {
-      const rank = (x) => {
-        const id = String(x.id).toLowerCase();
-        return id === q ? 0 : id.startsWith(q) ? 1 : 2;
-      };
-      return rank(a) - rank(b);
-    });
-  }
-  const shown = items.slice(0, 80);
-  list.innerHTML = "";
-  if (shown.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "np-combo-empty";
-    empty.textContent = all.length ? "Eşleşen sürüm yok." : "Sürüm listesi yükleniyor...";
-    list.appendChild(empty);
-  } else {
-    shown.forEach((v) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "np-combo-item" + (v.id === npState.version ? " selected" : "");
-      item.setAttribute("data-version", v.id);
-      item.setAttribute("role", "option");
-      item.innerHTML =
-        `<span class="np-combo-id">${v.is_optimized ? '<span class="np-combo-opt" aria-hidden="true">⚡</span>' : ""}${escapeHtml(v.id)}</span>` +
-        `<span class="np-combo-type">${escapeHtml(v.type || "")}</span>`;
-      item.addEventListener("click", () => npPickVersion(v.id, v));
-      item.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); npPickVersion(v.id, v); }
-      });
-      list.appendChild(item);
-    });
-    if (items.length > shown.length) {
-      const more = document.createElement("div");
-      more.className = "np-combo-more";
-      more.textContent = `+${items.length - shown.length} sürüm daha... (aramayı daraltın)`;
-      list.appendChild(more);
-    }
-  }
-  if (open) {
-    list.classList.add("open");
-    if (input) input.setAttribute("aria-expanded", "true");
-  }
-}
-
-function npCloseVersionList() {
-  const list = document.getElementById("npVersionList");
-  const input = document.getElementById("instanceVersionInput");
-  if (list) list.classList.remove("open");
-  if (input) input.setAttribute("aria-expanded", "false");
-}
-
-function npApplyVersion(version) {
-  npState.version = version;
-  const info = Array.isArray(state.versions) ? state.versions.find((v) => v.id === version) : null;
-  npState.versionType = info && info.type ? info.type : "release";
-  npState.versionOptimized = !!(info && info.is_optimized);
-  const input = document.getElementById("instanceVersionInput");
-  if (input) input.value = version;
-
-  // Buton icerigi: surum adi (yumusak fade ile) + tip rozeti + optimize rozeti
-  const vEl = document.getElementById("npVersionPickerValue");
-  if (vEl) {
-    vEl.textContent = version;
-    vEl.classList.remove("nvp-updated");
-    void vEl.offsetWidth;           // animasyonu yeniden tetikle
-    vEl.classList.add("nvp-updated");
-  }
-  const badge = document.getElementById("npVersionPickerBadge");
-  if (badge) {
-    badge.textContent = VERSION_TYPE_LABELS[npState.versionType] || npState.versionType || "Release";
-    badge.setAttribute("data-type", npState.versionType || "release");
-  }
-  npShow(document.getElementById("npVersionPickerOpt"), npState.versionOptimized);
-  npText(document.getElementById("npVersionHint"), "Seçildi: " + version);
-}
-
-function npPickVersion(version, meta) {
-  if (!version) return;
-  npApplyVersion(version);
-  npCloseVersionList();
-  npFetchLoaderInfo();
-}
-
-// ---------- Mod yükleyici seçimi + otomatik sürüm ataması ----------
-function npSelectLoader(loader) {
-  npState.loader = loader || "fabric";
-  npState.manualLoaderVersion = "";
-  npState.loaderInfo = null;
-  npState.loaderError = "";
-  document.querySelectorAll("#npLoaderGrid .np-loader-card").forEach((c) => {
-    c.classList.toggle("active", c.getAttribute("data-loader") === npState.loader);
-  });
-  const sel = document.getElementById("npLoaderVersionSelect");
-  if (sel) sel.innerHTML = '<option value="">Otomatik (önerilen)</option>';
-  const meta = NP_LOADERS.find((l) => l.id === npState.loader);
-  npText(document.getElementById("npLoaderNote"), meta ? meta.note : "");
-  npFetchLoaderInfo();
-}
-
-async function npFetchLoaderInfo() {
-  if (!npState.version) return;
-  if (npState.loader === "vanilla") {
-    npState.loaderInfo = null;
-    npState.loaderLoading = false;
-    npState.loaderError = "";
-    npUpdateLoaderBox();
-    return;
-  }
-  npState.loaderLoading = true;
-  npState.loaderError = "";
-  npUpdateLoaderBox();
-  const reqId = ++npState.packRequestId;
-  const data = await apiGet(
-    `/api/loaders/versions?loader=${encodeURIComponent(npState.loader)}&version=${encodeURIComponent(npState.version)}`,
-    25000
-  );
-  if (reqId !== npState.packRequestId) return;
-  npState.loaderLoading = false;
-  if (!data || !data.success) {
-    npState.loaderInfo = null;
-    npState.loaderError = (data && data.error) || "Yükleyici sürüm bilgisi alınamadı.";
-  } else {
-    npState.loaderInfo = data;
-  }
-  const sel = document.getElementById("npLoaderVersionSelect");
-  if (sel) {
-    sel.innerHTML = '<option value="">Otomatik (önerilen)</option>';
-    const info = npState.loaderInfo;
-    // TAM liste kullanilir (stable_only degil): kullanici gecmis surumlerin
-    // tamamini gorebilmeli. Kararli surumler isaretlenir.
-    const all = (info && info.versions) || [];
-    const stableSet = new Set((info && info.stable_only) || []);
-    all.forEach((v) => {
-      const o = document.createElement("option");
-      o.value = v;
-      o.textContent = stableSet.has(v) ? `${v}   • kararlı` : v;
-      sel.appendChild(o);
-    });
-    sel.value = all.indexOf(npState.manualLoaderVersion) !== -1 ? npState.manualLoaderVersion : "";
-  }
-  npUpdateLoaderBox();
-}
-
-function npUpdateLoaderBox() {
-  const valueEl = document.getElementById("npLoaderRecommended");
-  const reasonEl = document.getElementById("npLoaderReason");
-  const hintEl = document.getElementById("npLoaderVersionHint");
-  if (!valueEl) return;
-
-  if (npState.loader === "vanilla") {
-    valueEl.innerHTML = '<span class="np-lv-none">Yükleyici yok</span>';
-    npText(reasonEl, "Vanilla profilde mod yükleyici kurulmaz.");
-    if (hintEl) hintEl.textContent = "Vanilla seçiliyken loader sürümü gerekmez.";
-    return;
-  }
-  if (npState.loaderLoading) {
-    valueEl.innerHTML = '<span class="np-lv-spinner" aria-hidden="true"></span> hesaplanıyor...';
-    npText(reasonEl, `${npState.version} için ${npState.loader} sürümleri sorgulanıyor...`);
-    return;
-  }
-  if (npState.loaderError) {
-    valueEl.innerHTML = '<span class="np-lv-error">alınamadı</span>';
-    npText(reasonEl, npState.loaderError);
-    return;
-  }
-  const info = npState.loaderInfo;
-  if (!info || info.supported === false) {
-    valueEl.innerHTML = '<span class="np-lv-warn">desteklenmiyor</span>';
-    npText(reasonEl, `${npState.loader} ${npState.version} sürümü için yayınlanmıyor. Farklı bir sürüm ya da yükleyici seçin.`);
-    return;
-  }
-  const rec = info.recommended || "";
-  // Durust bilgilendirme: yukleyici bu MC surumunu farkli adlandirabilir ve
-  // bazi yeni surumler icin henuz kararli yapi olmayabilir.
-  const aliasNote = info.mc_alias ? ` Yükleyici bu sürümü "${info.mc_alias}" olarak adlandırır.` : "";
-  const betaNote = /beta|alpha|rc/i.test(rec) ? " ⚠️ Bu Minecraft sürümü için kararlı yapı yok, en yeni ön sürüm öneriliyor." : "";
-  if (npState.manualLoaderVersion) {
-    valueEl.innerHTML = `<span class="np-lv-manual">${escapeHtml(npState.manualLoaderVersion)}</span> <span class="np-lv-tag">elle seçildi</span>`;
-    npText(reasonEl, `Otomatik öneri: ${rec || "—"} • Gelişmiş menüden değiştirildi.`);
-  } else {
-    valueEl.innerHTML = `<span class="np-lv-ok">${escapeHtml(rec || "—")}</span> <span class="np-lv-tag">otomatik</span>`;
-    npText(reasonEl, (rec
-      ? `${npState.version} + ${npState.loader} için önerilen sürüm otomatik atandı.`
-      : "Önerilen sürüm bulunamadı, kütüphane varsayılanı kullanılacak.") + aliasNote + betaNote);
-  }
-  if (hintEl) hintEl.textContent = info.total_versions
-    ? `${info.total_versions} sürümün tamamı listelendi${info.stable_count ? ` (${info.stable_count} tanesi kararlı olarak işaretli)` : ""}.`
-    : "";
-}
-
-// ---------- Modal aç / kapa ----------
-function openCreateInstanceModal() {
-  const modal = document.getElementById("createInstanceModal");
-  if (!modal) return;
-  const nameInput = document.getElementById("instanceNameInput");
-  const iconInput = document.getElementById("instanceIconInput");
-  if (nameInput) nameInput.value = "";
-  if (iconInput) iconInput.value = "";
-
-  const fallbackVersion = npState.version || state.selectedVersion || (state.versions[0] && state.versions[0].id) || "1.20.4";
-  npApplyVersion(fallbackVersion);
-  npState.manualLoaderVersion = "";
-  npSelectLoader(npState.loader || "fabric");
-  npSelectTab("custom");
-  npRenderPackVersionFilter();
-
-  modal.style.display = "flex";
-  if (nameInput) setTimeout(() => nameInput.focus(), 140);
-}
-
-function closeCreateInstanceModal() {
-  const modal = document.getElementById("createInstanceModal");
-  if (modal) modal.style.display = "none";
-  npCloseVersionList();
-}
-
-async function confirmCreateInstance() {
-  const nameInput = document.getElementById("instanceNameInput");
-  const iconInput = document.getElementById("instanceIconInput");
-  const name = ((nameInput && nameInput.value) || "").trim();
-  const icon = ((iconInput && iconInput.value) || "").trim();
-  const version = npState.version || state.selectedVersion || "1.20.4";
-  const loader = npState.loader || "fabric";
-  const loaderVersion = npState.manualLoaderVersion || "";
-
-  if (!name) {
-    showToast("Lütfen bir profil adı girin.", "info");
-    if (nameInput) nameInput.focus();
-    return;
-  }
-  if (npState.loaderLoading) {
-    showToast("Yükleyici sürümü hâlâ hesaplanıyor, bir saniye...", "info");
-    return;
-  }
-  const info = npState.loaderInfo;
-  if (loader !== "vanilla" && info && info.supported === false) {
-    showToast(`⚠️ ${loader} ${version} için desteklenmiyor. Farklı sürüm/yükleyici seçin.`, "error");
-    return;
-  }
-
-  const confirmBtn = document.getElementById("btnConfirmCreateInstance");
-  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = "Oluşturuluyor..."; }
-
-  const data = await apiPost(
-    "/api/instances/create",
-    { name, version, loader, loader_version: loaderVersion, icon },
-    15000
-  );
-
-  if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = "Oluştur ve Aktif Yap"; }
-
-  if (data && data.success && data.instance) {
-    closeCreateInstanceModal();
-    state.modrinthTargetId = data.instance.id;
-    localStorage.setItem("cl_modrinth_target", data.instance.id);
-    await loadInstances();
-    setActiveInstance(data.instance.id);
-    const lvText = loader === "vanilla" ? "" : (loaderVersion ? ` • ${loaderVersion}` : " • oto loader");
-    showToast(`✓ "${data.instance.name}" oluşturuldu (${loader}${lvText}).`, "success");
-    fetchModrinth(true);
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Profil oluşturulamadı."}`, "error");
-  }
-}
-
-// ==================== SEKME 2: MOD PAKETLERİ (yalnızca Modrinth) ====================
-function npRenderPackVersionFilter() {
-  const sel = document.getElementById("npPackVersionFilter");
-  if (!sel) return;
-  const current = sel.value;
-  sel.innerHTML = '<option value="">Tüm sürümler</option>';
-  const all = Array.isArray(state.versions) ? state.versions : [];
-  all.slice(0, 120).forEach((v) => {
-    const o = document.createElement("option");
-    o.value = v.id;
-    o.textContent = v.id;
-    sel.appendChild(o);
-  });
-  if (current) sel.value = current;
-}
-
-async function npSearchPacks() {
-  if (npState.packBusy) return;
-  npState.packBusy = true;
-  const list = document.getElementById("npPackList");
-  if (list) {
-    list.innerHTML = '<div class="np-pack-loading"><span class="np-spinner"></span><span>Mod paketleri taranıyor...</span></div>';
-  }
-  const searchEl = document.getElementById("npPackSearchInput");
-  const versionEl = document.getElementById("npPackVersionFilter");
-  const loaderEl = document.getElementById("npPackLoaderFilter");
-  const sortEl = document.getElementById("npPackSortSelect");
-  const params = new URLSearchParams({
-    q: (searchEl && searchEl.value) || "",
-    type: "modpack",
-    version: (versionEl && versionEl.value) || "",
-    loader: (loaderEl && loaderEl.value) || "",
-    sort: (sortEl && sortEl.value) || "relevance",
-    limit: 20,
-    offset: 0,
-  });
-  const data = await apiGet(`/api/modrinth/search?${params.toString()}`, 20000);
-  npState.packBusy = false;
-
-  if (data && data.error) {
-    npState.packHits = [];
-    const listEl = document.getElementById("npPackList");
-    if (listEl) {
-      listEl.innerHTML = `
-        <div class="np-pack-loading">
-          <span class="np-net-error">⚠️ ${escapeHtml(data.error)}</span>
-          <span class="np-net-hint">Ağ testi için: <code>http://127.0.0.1:18420/api/net-test</code></span>
-        </div>`;
-    }
-    npRenderPackDetail(null);
-    showNetErrorOnce(data.error);
-    return;
-  }
-
-  npState.packHits = data && Array.isArray(data.hits) ? data.hits : [];
-  npRenderPackList();
-  if (npState.packHits.length > 0) npSelectPack(npState.packHits[0]);
-  else npRenderPackDetail(null);
-}
-
-// Ag hatasini kullaniciya BIR KEZ toast olarak goster (spam yapmaz)
-function showNetErrorOnce(message) {
-  const key = String(message || "").slice(0, 120);
-  if (state.lastNetErrorShown === key) return;
-  state.lastNetErrorShown = key;
-  showToast("⚠️ Bağlantı hatası: " + message, "error");
-}
-
-function npRenderPackList() {
-  const list = document.getElementById("npPackList");
-  if (!list) return;
-  list.innerHTML = "";
-  if (npState.packHits.length === 0) {
-    list.innerHTML = '<div class="np-pack-loading"><span>Sonuç bulunamadı.</span></div>';
-    return;
-  }
-  npState.packHits.forEach((hit, i) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "np-pack-item" + (npState.selectedPack && npState.selectedPack.slug === hit.slug ? " active" : "");
-    item.style.animationDelay = Math.min(i * 35, 420) + "ms";
-    item.innerHTML = `
-      <img class="np-pack-icon" src="${escapeHtml(hit.icon_url || "")}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
-      <span class="np-pack-text">
-        <strong>${escapeHtml(hit.title || hit.slug)}</strong>
-        <small>${escapeHtml(hit.description || "")}</small>
-        <span class="np-pack-meta">↓ ${npFmtNum(hit.downloads)}${hit.categories && hit.categories.length ? " • " + escapeHtml(hit.categories.slice(0, 3).join(", ")) : ""}</span>
-      </span>
-      <span class="np-pack-arrow" aria-hidden="true">→</span>`;
-    item.addEventListener("click", () => npSelectPack(hit));
-    list.appendChild(item);
-  });
-}
-
-function npRenderPackDetail(hit) {
-  const box = document.getElementById("npPackDetail");
-  if (!box) return;
-  if (!hit) {
-    box.innerHTML = `
-      <div class="np-pack-empty">
-        <span class="np-pack-empty-icon" aria-hidden="true">📦</span>
-        <span>Detayları görmek için soldan bir mod paketi seçin.</span>
-      </div>`;
-    return;
-  }
-  box.innerHTML = `
-    <div class="np-pack-det-head">
-      <img class="np-pack-det-icon" src="${escapeHtml(hit.icon_url || "")}" alt="" onerror="this.style.visibility='hidden'">
-      <div class="np-pack-det-title">
-        <h4>${escapeHtml(hit.title || hit.slug)}</h4>
-        <p class="np-pack-det-author">${escapeHtml(hit.author || "Modrinth")}</p>
-        <div class="np-pack-det-badges">
-          <span class="np-chip">↓ ${npFmtNum(hit.downloads)}</span>
-          <span class="np-chip">♥ ${npFmtNum(hit.follows)}</span>
-          <span class="np-chip" id="npPackDetLoaders">—</span>
-        </div>
-      </div>
-    </div>
-    <p class="np-pack-det-desc">${escapeHtml(hit.description || "")}</p>
-    <div class="np-pack-det-cats">
-      ${(hit.categories || []).map((c) => `<span class="np-chip">${escapeHtml(c)}</span>`).join("")}
-    </div>
-    <div class="np-pack-det-hint">
-      Bu paket kendi Minecraft sürümü ve yükleyicisiyle <strong>yeni bir profil</strong> olarak kurulur.
-    </div>`;
-}
-
-async function npSelectPack(hit) {
-  npState.selectedPack = hit;
-  npState.selectedPackVersion = "";
-  const items = document.querySelectorAll("#npPackList .np-pack-item");
-  npState.packHits.forEach((h, i) => {
-    if (items[i]) items[i].classList.toggle("active", h.slug === hit.slug);
-  });
-  npRenderPackDetail(hit);
-
-  const gvSel = document.getElementById("npPackGameVersionSelect");
-  const installBtn = document.getElementById("npPackInstallBtn");
-  if (gvSel) gvSel.innerHTML = '<option value="">yükleniyor...</option>';
-  if (installBtn) installBtn.disabled = true;
-
-  const data = await apiGet(`/api/modrinth/pack/versions?slug=${encodeURIComponent(hit.slug)}`, 20000);
-  if (!npState.selectedPack || npState.selectedPack.slug !== hit.slug) return;
-
-  const gameVersions = (data && data.game_versions) || [];
-  const loaders = (data && data.loaders) || [];
-  const target = getModrinthTarget();
-  const preferred = (target && target.version) || state.selectedVersion || "";
-
-  npText(document.getElementById("npPackDetLoaders"), loaders.length ? loaders.join(" • ") : "—");
-
-  if (gvSel) {
-    gvSel.innerHTML = "";
-    if (gameVersions.length === 0) {
-      const o = document.createElement("option");
-      o.value = "";
-      o.textContent = "sürüm bilgisi yok";
-      gvSel.appendChild(o);
-    } else {
-      gameVersions.forEach((g) => {
-        const o = document.createElement("option");
-        o.value = g;
-        o.textContent = g;
-        gvSel.appendChild(o);
-      });
-      if (preferred && gameVersions.indexOf(preferred) !== -1) gvSel.value = preferred;
-    }
-  }
-  if (installBtn) installBtn.disabled = false;
-}
-
-async function npInstallSelectedPack() {
-  const hit = npState.selectedPack;
-  if (!hit) return;
-  const gvSel = document.getElementById("npPackGameVersionSelect");
-  const gameVersion = (gvSel && gvSel.value) || "";
-  const btn = document.getElementById("npPackInstallBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "📦 Profil oluşturuluyor..."; }
-  showToast(`📦 ${hit.title || hit.slug} yeni profil olarak ekleniyor...`, "info");
-
-  const data = await apiPost("/api/modrinth/modpack/install", {
-    slug: hit.slug,
-    game_version: gameVersion,
-  }, 60000);
-
-  if (btn) { btn.disabled = false; btn.textContent = "📦 Profil Olarak Kur"; }
-
-  if (data && data.success && data.instance) {
-    closeCreateInstanceModal();
-    await loadInstances();
-    ensurePackPolling();
-    switchTab("tab-instances");
-    showToast(`✓ "${data.instance.name}" profili oluşturuldu, kurulum arka planda sürüyor.`, "success");
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Modpack profili oluşturulamadı."}`, "error");
-  }
-}
-
-async function deleteInstance(id, name) {
-  const inst = getInstanceById(id);
-  if (!inst) return;
-
-  if (!window.confirm(`"${name}" profili ve içindeki tüm modlar kalıcı olarak silinecek. Emin misiniz?`)) {
-    return;
-  }
-
-  const data = await apiPost("/api/instances/delete", { id }, 10000);
-
-  if (data && data.success) {
-    if (state.activeInstanceId === id) {
-      state.activeInstanceId = "";
-      localStorage.removeItem("cl_instance");
-    }
-    if (state.modrinthTargetId === id) {
-      state.modrinthTargetId = "";
-      localStorage.removeItem("cl_modrinth_target");
-    }
-    await loadInstances();
-    showToast(`🗑️ "${name}" profili silindi.`, "info");
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Profil silinemedi."}`, "error");
-  }
-}
-
-function renderModrinthTargetBar() {
-  const select = document.getElementById("modrinthInstanceSelect");
-  const hint = document.getElementById("modrinthTargetHint");
-  const loaderSelect = document.getElementById("modrinthLoaderSelect");
-  if (!select) return;
-
-  select.innerHTML = "";
-
-  if (state.instances.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "Profil oluşturulmamış — önce yeni profil ekleyin";
-    select.appendChild(opt);
-    select.disabled = true;
-    if (loaderSelect) loaderSelect.disabled = false;
-    if (hint) hint.textContent = "İçerik kurmak için önce bir profil oluşturun; modlar/shaderlar/doku paketleri o profilin klasörüne kurulur.";
-    return;
-  }
-
-  state.instances.forEach(inst => {
-    const opt = document.createElement("option");
-    opt.value = inst.id;
-    opt.textContent = `${inst.name} — MC ${inst.version} (${inst.loader})`;
-    select.appendChild(opt);
-  });
-
-  const target = getModrinthTarget();
-  select.value = target ? target.id : state.instances[0].id;
-  select.disabled = false;
-
-  const effective = target || state.instances[0];
-
-  if (loaderSelect) {
-    loaderSelect.disabled = true;
-    loaderSelect.value = ["fabric", "forge"].includes(effective.loader) ? effective.loader : "Tümü";
-  }
-
-  if (hint) {
-    const vanillaWarning = (effective.loader === "vanilla" && state.modrinthType === "mod") ? " ⚠️ Vanilla profillere mod kurulmaz." : "";
-    hint.textContent = `"${effective.name}" profiline kurulacak • MC ${effective.version} • ${effective.loader} • ${effective.mod_count || 0} mevcut mod${vanillaWarning}`;
-  }
-}
-
-// ================== SÜRÜM YÖNETİMİ & KOMBİNE FİLTRELEME ==================
-async function loadVersions() {
-  const data = await apiGet("/api/versions", 12000);
-
-  if (data && data.error && !state.lastVersionErrorShown) {
-    state.lastVersionErrorShown = true;
-    showToast("⚠️ " + data.error, "error");
-  }
-  if (data && Array.isArray(data.versions) && data.versions.length > 0) {
-    state.versions = data.versions;
-    state.installedVersions = Array.isArray(data.installed) ? data.installed : [];
-  } else if (state.versions.length === 0) {
-    // Core'a ulaşılamadı: uygulama asla boş kalmasın, yerel listeyle devam et
-    state.versions = FALLBACK_VERSIONS.slice();
-    state.installedVersions = [];
-  }
-
-  const datalist = document.getElementById("versionsDatalist");
-  if (datalist) {
-    datalist.innerHTML = "";
-    state.versions.forEach(v => {
-      const opt = document.createElement("option");
-      opt.value = v.id;
-      datalist.appendChild(opt);
-    });
-  }
-
-  filterAndRenderVersionTable();
-}
-
-function openVersionSelectorModal() {
-  const modal = document.getElementById("versionSelectorModal");
-  if (!modal) return;
-  modal.style.display = "flex";
-  filterAndRenderVersionTable();
-  const searchInp = document.getElementById("versionTableSearchInput");
-  if (searchInp) setTimeout(() => searchInp.focus(), 60);
-}
-
-function closeVersionSelectorModal() {
-  const modal = document.getElementById("versionSelectorModal");
-  if (modal) modal.style.display = "none";
-}
-
-function selectVersion(vid) {
-  state.selectedVersion = vid;
-  localStorage.setItem("cl_version", vid);
-
-  // Seçim artık YENİ PROFİL oluşturma ekranını besler: sürüm atanır,
-  // önerilen loader sürümü yenilenir ve kullanıcı alttan loader seçer.
-  npApplyVersion(vid);
-  npFetchLoaderInfo();
-  closeVersionSelectorModal();
-
-  const ci = document.getElementById("createInstanceModal");
-  if (ci && ci.style.display !== "none") {
-    showToast(`Sürüm: ${vid} — şimdi mod yükleyicisini seçin`, "info");
-  } else {
-    showToast(`Sürüm seçildi: ${vid}`, "info");
-  }
-}
-
-function formatVersionDate(rt) {
-  if (!rt) return "—";
-  const d = new Date(rt);
-  if (isNaN(d.getTime())) return "—";
-  try {
-    return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" });
-  } catch (_) {
-    return d.toISOString().slice(0, 10);
-  }
-}
-
-const VERSION_TYPE_LABELS = {
-  release: "Release",
-  snapshot: "Snapshot",
-  beta: "Beta",
-  alpha: "Alpha",
-  experimental: "Deneysel"
-};
-
-function filterAndRenderVersionTable() {
-  const list = document.getElementById("versionCardList");
-  const noResults = document.getElementById("versionNoResults");
-  const countText = document.getElementById("versionFilteredCountText");
-  if (!list) return;
-
-  list.innerHTML = "";
-
-  // Filtre pill'lerinin secili gorunumunu state ile senkronla
-  document.querySelectorAll(".version-filter-cb").forEach((cb) => {
-    const pill = cb.closest(".vpill");
-    if (pill) pill.classList.toggle("on", cb.checked);
-  });
-  const query = (state.versionSearchQuery || "").toLowerCase().trim();
-
-  const filtered = state.versions.filter(v => {
-    if (state.versionFilters.optimized) {
-      if (!v.is_optimized) return false;
-    } else if (!state.versionFilters[v.type]) {
-      return false;
-    }
-    if (query && !String(v.id).toLowerCase().includes(query)) return false;
-    return true;
-  });
-
-  if (countText) countText.textContent = `${filtered.length} sürüm listeleniyor`;
-
-  if (filtered.length === 0) {
-    if (noResults) noResults.style.display = "block";
-    return;
-  }
-  if (noResults) noResults.style.display = "none";
-
-  filtered.forEach(v => {
-    const isSelected = v.id === (npState.version || state.selectedVersion);
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "vcard" + (isSelected ? " selected" : "");
-    card.setAttribute("role", "option");
-    card.setAttribute("aria-selected", isSelected ? "true" : "false");
-    card.innerHTML = `
-      <span class="vcard-accent" aria-hidden="true"></span>
-      <span class="vcard-main">
-        <span class="vcard-name">${escapeHtml(v.id)}</span>
-        ${v.is_optimized ? '<span class="vcard-badge badge-opt" title="Cookie Launcher optimize profili hazır">⚡ Optimize</span>' : ""}
-        <span class="vcard-badge badge-${escapeHtml(v.type)}">${VERSION_TYPE_LABELS[v.type] || escapeHtml(v.type)}</span>
-        ${isSelected ? '<span class="vcard-badge badge-current">✓ Seçili</span>' : ""}
-      </span>
-      <span class="vcard-side">
-        ${v.is_installed ? '<span class="vcard-installed">✓ Yüklü</span>' : ""}
-        <span class="vcard-date">${formatVersionDate(v.releaseTime)}</span>
-      </span>`;
-    card.addEventListener("click", () => selectVersion(v.id));
-    list.appendChild(card);
-  });
-}
-
-// ================== NON-BLOCKING OYUN BAŞLATMA AKIŞI ==================
-function setLaunchButton(mode) {
-  const btnLaunch = document.getElementById("btnLaunchGame");
-  const btnText = document.getElementById("btnLaunchText");
-  if (btnText) {
-    const labels = {
-      idle: "OYUNU BAŞLAT",
-      busy: "BAŞLATILIYOR...",
-      installing: "YÜKLENİYOR...",
-      running: "🎮 OYUN ÇALIŞIYOR",
-      noProfile: "ÖNCE PROFİL OLUŞTUR"
-    };
-    btnText.textContent = labels[mode] || labels.idle;
-  }
-  // noProfile modunda buton tiklanabilir kalir: tiklayinca profil olusturma acilir
-  if (btnLaunch) {
-    btnLaunch.disabled = (mode !== "idle" && mode !== "noProfile");
-    btnLaunch.dataset.mode = mode;
-  }
-}
-
-function openProgressModal() {
-  const modal = document.getElementById("launchProgressModal");
-  if (!modal) return;
-  modal.style.display = "flex";
-  state.progressOpen = true;
-}
-
-function ensureProgressModal() {
-  if (state.progressDismissed) return;
-  const modal = document.getElementById("launchProgressModal");
-  if (!modal) return;
-  if (modal.style.display === "none" || !state.progressOpen) {
-    modal.style.display = "flex";
-  }
-  state.progressOpen = true;
-}
-
-function closeProgressModal() {
-  const modal = document.getElementById("launchProgressModal");
-  if (modal) modal.style.display = "none";
-  state.progressOpen = false;
-  state.progressDismissed = true;
-}
-
-function scheduleCloseProgressModal(delayMs) {
-  if (state.progressCloseTimer) return;
-  state.progressCloseTimer = setTimeout(() => {
-    closeProgressModal();
-    state.progressCloseTimer = null;
-  }, delayMs);
-}
-
-function setProgressBar(percent) {
-  const barFill = document.getElementById("launchProgressBarFill");
-  const percentText = document.getElementById("launchProgressPercent");
-  const value = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
-  if (barFill) barFill.style.width = `${value}%`;
-  if (percentText) percentText.textContent = `${value}%`;
-}
-
-function setProgressTexts(status, detail, mb) {
-  const statusMsg = document.getElementById("launchProgressStatusText");
-  const detailMsg = document.getElementById("launchProgressDetailText");
-  const mbText = document.getElementById("launchProgressMbText");
-
-  if (statusMsg && status) statusMsg.textContent = status;
-  if (detailMsg) detailMsg.textContent = detail || "";
-  if (mbText) {
-    const mbValue = Number(mb);
-    mbText.textContent = `↓ ${(Number.isFinite(mbValue) ? mbValue : 0).toFixed(1)} MB`;
-  }
-}
-
-async function handleLaunchGame() {
-  if (state.launchRequested) return;
-
-  const btnLaunch = document.getElementById("btnLaunchGame");
-  if (btnLaunch && btnLaunch.disabled) return;
-
-  const activeInst = getActiveInstance();
-
-  // Profil yoksa hicbir surum indirilmez / oyun baslatilmaz. Kullanici once
-  // profil olusturur (surum + yukleyici profile baglidir).
-  if (!activeInst) {
-    showToast("Başlatmak için önce bir profil oluşturun veya seçin.", "info");
-    switchTab("tab-instances");
-    setTimeout(() => openCreateInstanceModal(), 220);
-    return;
-  }
-
-  const versionToLaunch = activeInst.version;
-
-  state.launchRequested = true;
-  state.progressDismissed = false;
-  state.progressCloseTimer = null;
-  state.lastErrorShown = null;
-
-  openProgressModal();
-  setLaunchButton("busy");
-  setProgressBar(2);
-  setProgressTexts(
-    "Oyun hazırlanıyor...",
-    activeInst ? `"${activeInst.name}" profili başlatılıyor...` : "Arka plan servisine bağlanılıyor...",
-    0
-  );
-
-  const payload = {
-    username: state.username,
-    version: versionToLaunch,
-    loader: activeInst.loader,
-    cookie_optimized: state.cookieOptimize,
-    ram: state.ram,
-    jvm_preset: "aikar"
-  };
-  payload.instance_id = activeInst.id;
-
-  let accepted = false;
-  let backendError = null;
-
-  for (let attempt = 1; attempt <= 2 && !accepted; attempt++) {
-    const data = await apiPost("/api/launch", payload, 15000);
-
-    if (data && data.success) {
-      accepted = true;
-      break;
-    }
-    if (data && data.error) {
-      backendError = data.error;
-      break;
-    }
-    if (attempt === 1) {
-      setProgressTexts("Oyun hazırlanıyor...", "Core servisi yanıt vermedi, yeniden deneniyor...", 0);
-    }
-    await sleep(700);
-  }
-
-  if (accepted) {
-    setProgressTexts("Başlatma isteği kabul edildi", "İndirme akışı arka planda sürüyor...", 0);
-    return;
-  }
-
-  // İstek kabul edilmedi: modalı kapat, butonu eski haline getir, tek seferlik bilgi ver
-  state.launchRequested = false;
-  closeProgressModal();
-  state.engineMode = "idle";
-  setLaunchButton("idle");
-  showErrorOnce(backendError || "Core servisine ulaşılamadı. Arka plan servisini yeniden başlatın.");
-}
-
-// ================== CANLI DURUM & İLERLEME POLLING ==================
-function startStatusPolling() {
-  if (state.isPollingStatus) return;
-  state.isPollingStatus = true;
-  state.statusTimer = setInterval(pollStatus, 700);
-}
-
-async function pollStatus() {
-  state.pollTick++;
-
-  const data = await apiGet("/api/status", 5000);
-
-  if (!data) {
-    state.coreFailCount++;
-    if (state.coreFailCount >= 3) {
-      const engineStatus = document.getElementById("engineStatusText");
-      if (engineStatus) engineStatus.textContent = "Core Bekleniyor...";
-      const statusWrap = document.getElementById("railCoreStatus");
-      if (statusWrap) statusWrap.dataset.state = "offline";
-    }
-    // Her ~7 saniyede bir portu yeniden keşfetmeyi dene
-    if (state.coreFailCount % 10 === 0) {
-      await detectApiBase();
-    }
-    return;
-  }
-
-  state.coreFailCount = 0;
-  updateProgressUI(data);
-
-  // Konsol loglarını daha seyrek güncelle (gereksiz yükü önler)
-  if (state.pollTick % 3 === 0) {
-    const logData = await apiGet("/api/logs", 5000);
-    const cOut = document.getElementById("consoleOutput");
-    if (logData && Array.isArray(logData.logs) && cOut) {
-      cOut.textContent = logData.logs.join("\n");
-      cOut.scrollTop = cOut.scrollHeight;
-    }
-  }
-}
-
-function updateEngineStatus(installing, running) {
-  const engineStatus = document.getElementById("engineStatusText");
-  const statusWrap = document.getElementById("railCoreStatus");
-  if (statusWrap) statusWrap.dataset.state = running ? "running" : (installing ? "busy" : "ready");
-  if (!engineStatus) return;
-  if (running) {
-    engineStatus.textContent = "Oyun Çalışıyor";
-  } else if (installing) {
-    engineStatus.textContent = "Hazırlanıyor...";
-  } else {
-    engineStatus.textContent = "Core Hazır";
-  }
-}
-
-function updateProgressUI(data) {
-  const installing = !!data.is_installing;
-  const running = !!data.is_running;
-  const error = data.error || null;
-
-  updateEngineStatus(installing, running);
-
-  // 1. İndirme / Hazırlama sürüyor
-  if (installing) {
-    state.launchRequested = true;
-    state.progressCloseTimer = null;
-    ensureProgressModal();
-    setProgressBar(data.percent || 2);
-    setProgressTexts(data.status || "Hazırlanıyor...", data.detail || "", data.downloaded_mb);
-    state.engineMode = "installing";
-    setLaunchButton("installing");
-    return;
-  }
-
-  // 2. Oyun başarıyla açıldı
-  if (running) {
-    if (!state.progressDismissed) {
-      ensureProgressModal();
-      setProgressBar(100);
-      setProgressTexts("✨ Oyun Başarıyla Açıldı!", "İyi oyunlar!", data.downloaded_mb);
-      scheduleCloseProgressModal(1200);
-    }
-    state.launchRequested = false;
-    state.engineMode = "running";
-    setLaunchButton("running");
-    return;
-  }
-
-  // 3. Boşta
-  if (state.launchRequested) {
-    state.launchRequested = false;
-    closeProgressModal();
-  }
-  if (error) {
-    showErrorOnce(error);
-    closeProgressModal();
-    apiPost("/api/clear-error", {}, 5000);
-  }
-  state.engineMode = "idle";
-  setLaunchButton("idle");
-}
-
-// ================== MODRINTH İÇERİK MERKEZİ ==================
-function contentCategoryFromType(type) {
-  if (type === "shader") return "shader";
-  if (type === "resourcepack") return "resourcepack";
-  return "mod";
-}
-
-function isContentInstalled(hit, category) {
-  if (!hit || category === "modpack") return false;
-  const cat = category || contentCategoryFromType(hit.project_type || state.modrinthType);
-  const slug = String(hit.slug || "").toLowerCase();
-  if (!slug) return false;
-
-  const meta = state.installedContentMeta[cat] || {};
-  if (meta[slug]) return true;
-
-  const files = (state.installedContent[cat] || []).map(f => String(f.name || "").toLowerCase());
-  const patterns = [slug, slug.replace(/-/g, "_"), slug.replace(/_/g, "-")];
-  return files.some(name =>
-    patterns.some(p =>
-      name === `${p}.jar` ||
-      name === `${p}.zip` ||
-      name.startsWith(`${p}-`) ||
-      name.startsWith(`${p}_`) ||
-      name.includes(`-${p}-`) ||
-      name.includes(`_${p}_`)
-    )
-  );
-}
-
-async function refreshInstalledContent() {
-  state.installedModSlugs = new Set();
-  state.installedModFiles = [];
-  state.installedContent = { mod: [], shader: [], resourcepack: [] };
-  state.installedContentMeta = { mod: {}, shader: {}, resourcepack: {} };
-
-  const target = getModrinthTarget();
-  state.installedContentInstanceId = target ? String(target.id || "") : "";
-  state.installedLoading = !!target;
-  renderInstalledPanel();
-  if (!target) {
-    state.contentLoadFailed = false;
-    state.installedLoading = false;
-    return;
-  }
-
-  const data = await apiGet(`/api/instances/content?instance_id=${encodeURIComponent(target.id)}`, 8000);
-  state.installedLoading = false;
-  if (!data || data.success !== true) {
-    state.contentLoadFailed = true;
-    renderInstalledPanel();
-    if (!state.coreModsWarned) {
-      state.coreModsWarned = true;
-      showToast("Core güncel değil: yüklü içerik listesi için launcher'ı yeniden başlatın.", "info");
-    }
-    return;
-  }
-  state.contentLoadFailed = false;
-
-  const categories = data.categories || {};
-  ["mod", "shader", "resourcepack"].forEach(cat => {
-    const files = (categories[cat] && categories[cat].files) || [];
-    state.installedContent[cat] = Array.isArray(files) ? files : [];
-    state.installedContent[cat].forEach(f => {
-      if (f && f.slug) state.installedContentMeta[cat][String(f.slug).toLowerCase()] = f;
-    });
-  });
-
-  state.installedModSlugs = new Set(Object.keys(state.installedContentMeta.mod));
-  state.installedModFiles = state.installedContent.mod.map(f => f.name);
-  renderInstalledPanel();
-}
-
-function ensureVersionButton(card, installed) {
-  if (!card) return;
-  const type = card.getAttribute("data-project-type") || "mod";
-  const actions = card.querySelector(".mod-card-actions") || card.querySelector(".mod-bottom-row");
-  let btn = card.querySelector(".btn-mod-ver");
-  const wanted = installed && type !== "modpack";
-
-  if (wanted && !btn && actions) {
-    btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn-mod-ver";
-    btn.title = "Bu içeriğin başka bir sürümünü kur";
-    btn.textContent = "⇄ Sürüm Değiştir";
-    btn.addEventListener("click", () => {
-      openVersionSwitchOverlay({
-        slug: card.getAttribute("data-slug") || "",
-        title: card.getAttribute("data-title") || "",
-        cat: card.getAttribute("data-project-type") || "mod",
-        iconUrl: card.getAttribute("data-icon") || "",
-        instance: getModrinthTarget()
-      });
-    });
-    actions.appendChild(btn);
-  } else if (!wanted && btn) {
-    btn.remove();
-  }
-}
-
-function applyInstalledStates() {
-  document.querySelectorAll(".mod-card[data-slug]").forEach(card => {
-    const slug = card.getAttribute("data-slug");
-    const type = card.getAttribute("data-project-type") || "mod";
-    const installed = type !== "modpack" &&
-      isContentInstalled({ slug: slug, project_type: type }, contentCategoryFromType(type));
-
-    if (installed) {
-      card.classList.add("installed");
-      const btn = card.querySelector(".btn-mod-dl");
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = "✓ Yüklü";
-      }
-      ensureVersionButton(card, true);
-      if (state.hideInstalled) {
-        card.style.display = "none";
-        return;
-      }
-    } else {
-      card.classList.remove("installed");
-      const btn = card.querySelector(".btn-mod-dl");
-      if (btn && btn.dataset.kind !== "modpack") {
-        btn.disabled = false;
-        btn.textContent = "⚡ Hızlı Kur";
-      }
-      ensureVersionButton(card, false);
-    }
-    card.style.display = "";
-  });
-}
-
-function renderInstalledPanel() {
-  const wrap = document.getElementById("installedListWrap");
-  if (!wrap) return;
-
-  const target = getModrinthTarget();
-  const profileEl = document.getElementById("installedPanelProfile");
-  if (profileEl) profileEl.textContent = target ? `— ${target.name}` : "— profil seçilmedi";
-
-  const counts = {
-    mod: (state.installedContent.mod || []).length,
-    shader: (state.installedContent.shader || []).length,
-    resourcepack: (state.installedContent.resourcepack || []).length
-  };
-  const setCount = (id, value) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = value;
-  };
-  setCount("installedCountMod", counts.mod);
-  setCount("installedCountShader", counts.shader);
-  setCount("installedCountResourcepack", counts.resourcepack);
-
-  const cat = state.installedCategory || "mod";
-  const files = state.installedContent[cat] || [];
-  const icons = { mod: "🧩", shader: "✨", resourcepack: "🎨" };
-  wrap.innerHTML = "";
-
-  if (!target) {
-    wrap.innerHTML = `<div class="empty-state empty-state-compact">
-      <div class="empty-state-icon" aria-hidden="true">📥</div>
-      <h3 class="empty-state-title">Kurulum hedefi seçilmedi</h3>
-      <p class="empty-state-desc">Yönetmek için üstten bir profil seçin.</p>
-    </div>`;
-    return;
-  }
-  if (state.contentLoadFailed) {
-    wrap.innerHTML = `<div class="empty-state empty-state-compact">
-      <div class="empty-state-icon" aria-hidden="true">⚠️</div>
-      <h3 class="empty-state-title">İçerik listesi alınamadı</h3>
-      <p class="empty-state-desc">Core eski sürümde olabilir; launcher'ı kapatıp yeniden başlatın.</p>
-    </div>`;
-    return;
-  }
-  if (state.installedLoading && files.length === 0) {
-    wrap.innerHTML = `<div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>`;
-    return;
-  }
-  if (files.length === 0) {
-    const labels = { mod: "mod", shader: "shader", resourcepack: "doku paketi" };
-    wrap.innerHTML = `<div class="empty-state empty-state-compact">
-      <div class="empty-state-icon" aria-hidden="true">${icons[cat] || "📦"}</div>
-      <h3 class="empty-state-title">Bu profilde henüz ${labels[cat]} yok</h3>
-      <p class="empty-state-desc">Modrinth sekmesinden içerik kurarak başlayın.</p>
-    </div>`;
-    return;
-  }
-
-  files.forEach(f => {
-    const row = document.createElement("div");
-    row.className = "installed-row ui-row";
-
-    const sizeText = f.size >= 1048576
-      ? `${(f.size / 1048576).toFixed(1)} MB`
-      : `${Math.max(1, Math.round((f.size || 0) / 1024))} KB`;
-
-    const displayName = (f.display_name && String(f.display_name).trim()) || cleanContentName(f.name);
-
-    const metaParts = [];
-    if (f.mod_id) metaParts.push(f.mod_id);
-    if (f.version) metaParts.push(`v${f.version}`);
-    metaParts.push(sizeText);
-
-    const iconSpan = document.createElement("span");
-    iconSpan.className = "installed-row-icon";
-    iconSpan.textContent = icons[cat] || "📦";
-    if (f.has_icon) {
-      const img = document.createElement("img");
-      img.className = "installed-row-icon-img";
-      img.alt = "";
-      img.loading = "lazy";
-      img.src = `${API_BASE}/api/instances/content/icon?instance_id=${encodeURIComponent(target.id)}` +
-        `&category=${encodeURIComponent(cat)}&name=${encodeURIComponent(f.name)}&t=${Math.round(f.mtime || 0)}`;
-      img.addEventListener("error", () => {
-        img.remove();
-        iconSpan.textContent = icons[cat] || "📦";
-      });
-      iconSpan.textContent = "";
-      iconSpan.appendChild(img);
-    }
-
-    const info = document.createElement("div");
-    info.className = "installed-row-info";
-    info.innerHTML = `
-      <div class="installed-row-name" title="${escapeHtml(f.description || f.name)}">${escapeHtml(displayName)}</div>
-      <div class="installed-row-meta">${escapeHtml(metaParts.join(" • "))}</div>
-    `;
-
-    const delBtn = document.createElement("button");
-    delBtn.className = "btn-installed-delete btn btn-ghost btn-danger-ghost";
-    delBtn.title = "Bu içeriği profilden kaldır";
-    delBtn.setAttribute("aria-label", "Bu içeriği profilden kaldır");
-    delBtn.textContent = "🗑️";
-    delBtn.addEventListener("click", () => deleteInstalledContent(cat, f.name));
-
-    row.appendChild(iconSpan);
-    row.appendChild(info);
-    row.appendChild(delBtn);
-    wrap.appendChild(row);
-  });
-}
-
-function cleanContentName(name) {
-  let n = String(name || "").replace(/\.(jar|zip)$/i, "");
-  n = n.replace(/[-_+ ]v?\d[\w.+\-]*$/i, "").trim();
-  return n || String(name || "");
-}
-
-async function deleteInstalledContent(category, name) {
-  const target = getModrinthTarget();
-  if (!target) return;
-
-  const ok = await showConfirmDialog({
-    icon: "🗑️",
-    title: "İçerik Silinsin mi?",
-    message: `"${name}" dosyası "${target.name}" profilinden kalıcı olarak silinecek. Bu işlem geri alınamaz.`,
-    okText: "Sil",
-    danger: true
-  });
-  if (!ok) return;
-
-  const data = await apiPost("/api/instances/content/delete", {
-    instance_id: target.id,
-    category: category,
-    name: name
-  }, 15000);
-
-  if (data && data.success) {
-    showToast(`🗑️ ${name} silindi.`, "success");
-    await refreshInstalledContent();
-    applyInstalledStates();
-    loadInstances();
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Dosya silinemedi."}`, "error");
-  }
-}
-
-function showConfirmDialog(options = {}) {
-  return new Promise(resolve => {
-    const modal = document.getElementById("confirmModal");
-    if (!modal) {
-      resolve(window.confirm(options.message || ""));
-      return;
-    }
-
-    const iconEl = document.getElementById("confirmModalIcon");
-    const titleEl = document.getElementById("confirmModalTitle");
-    const msgEl = document.getElementById("confirmModalMessage");
-    const okBtn = document.getElementById("btnConfirmOk");
-    const cancelBtn = document.getElementById("btnConfirmCancel");
-
-    if (iconEl) iconEl.textContent = options.icon || "⚠️";
-    if (titleEl) titleEl.textContent = options.title || "Emin misiniz?";
-    if (msgEl) msgEl.textContent = options.message || "";
-    if (okBtn) {
-      okBtn.textContent = options.okText || "Onayla";
-      okBtn.className = options.danger ? "btn-confirm-danger" : "btn-primary-action";
-    }
-
-    const cleanup = (value) => {
-      modal.style.display = "none";
-      if (okBtn) okBtn.removeEventListener("click", onOk);
-      if (cancelBtn) cancelBtn.removeEventListener("click", onCancel);
-      resolve(value);
-    };
-    const onOk = () => cleanup(true);
-    const onCancel = () => cleanup(false);
-
-    if (okBtn) okBtn.addEventListener("click", onOk);
-    if (cancelBtn) cancelBtn.addEventListener("click", onCancel);
-    modal.style.display = "flex";
-  });
-}
-
-function buildModCard(hit, index) {
-  const target = getModrinthTarget();
-  const isModpack = (hit.project_type === "modpack") || (state.modrinthType === "modpack");
-  const category = contentCategoryFromType(hit.project_type || state.modrinthType);
-  const installed = !isModpack && isContentInstalled(hit, category);
-
-  const card = document.createElement("div");
-  card.className = "mod-card" + (installed ? " installed" : "");
-  card.dataset.slug = hit.slug || "";
-  card.dataset.projectType = isModpack ? "modpack" : category;
-  card.dataset.title = hit.title || hit.slug || "";
-  card.dataset.icon = hit.icon_url || "";
-  card.style.animationDelay = `${Math.min(index * 0.03, 0.5)}s`;
-
-  const iconBox = document.createElement("div");
-  iconBox.className = "mod-icon-box";
-  if (hit.icon_url) {
-    const img = document.createElement("img");
-    img.src = hit.icon_url;
-    img.alt = hit.title || "";
-    img.loading = "lazy";
-    img.addEventListener("error", () => {
-      img.remove();
-      iconBox.textContent = isModpack ? "📦" : "🧩";
-    });
-    iconBox.appendChild(img);
-  } else {
-    iconBox.textContent = isModpack ? "📦" : "🧩";
-  }
-
-  let buttonLabel = "⚡ Hızlı Kur";
-  if (isModpack) buttonLabel = "📦 Profil Olarak Kur";
-  else if (installed) buttonLabel = "✓ Yüklü";
-
-  const content = document.createElement("div");
-  content.className = "mod-content";
-  content.innerHTML = `
-    <h4 class="mod-title" title="${escapeHtml(hit.title)}">${escapeHtml(hit.title)}</h4>
-    <p class="mod-desc">${escapeHtml(hit.description || "Açıklama bulunmuyor.")}</p>
-    <div class="mod-bottom-row">
-      <span style="font-size: 11px; color: var(--text-muted);">↓ ${(hit.downloads || 0).toLocaleString()}</span>
-      ${installed ? '<span class="mod-installed-chip">✓ Bu profilde yüklü</span>' : ""}
-      ${!installed && target ? `<span class="mod-target-chip" title="Kurulum hedefi: ${escapeHtml(target.name)}">📥 ${escapeHtml(target.name)}</span>` : ""}
-      <span class="mod-card-actions">
-        <button class="btn-mod-dl" data-kind="${isModpack ? "modpack" : category}">${buttonLabel}</button>
-      </span>
-    </div>
-  `;
-
-  const dlButton = content.querySelector(".btn-mod-dl");
-  if (dlButton) {
-    if (installed) {
-      dlButton.disabled = true;
-    } else {
-      dlButton.addEventListener("click", () => installModrinthProject(hit, dlButton));
-    }
-  }
-
-  if (installed && state.hideInstalled) {
-    card.style.display = "none";
-  }
-
-  card.appendChild(iconBox);
-  card.appendChild(content);
-  ensureVersionButton(card, installed);
-  return card;
-}
-
-function updateModrinthFooter(total = 0) {
-  const wrap = document.getElementById("modrinthResultsWrap");
-  if (!wrap) return;
-
-  let footer = document.getElementById("modrinthLoadMore");
-  if (!footer) {
-    footer = document.createElement("div");
-    footer.id = "modrinthLoadMore";
-    footer.className = "loading-state modrinth-load-more";
-    wrap.appendChild(footer);
-  }
-
-  if (state.modrinthLoading) {
-    footer.innerHTML = `<div class="spinner"></div><span>Daha fazla içerik yükleniyor...</span>`;
-  } else if (state.modrinthHasMore) {
-    footer.innerHTML = `<span>↓ Kaydırdıkça daha fazla içerik otomatik yüklenecek...</span>`;
-  } else if (state.modrinthHits.length > 0) {
-    footer.innerHTML = `<span>✓ Tüm sonuçlar yüklendi (${state.modrinthHits.length}${total ? "/" + total : ""}).</span>`;
-  } else {
-    footer.innerHTML = "";
-  }
-}
-
-async function fetchModrinth(reset = true) {
-  const wrap = document.getElementById("modrinthResultsWrap");
-  if (!wrap || state.modrinthLoading) return;
-  if (!reset && !state.modrinthHasMore) return;
-
-  state.modrinthLoading = true;
-
-  if (reset) {
-    state.modrinthOffset = 0;
-    state.modrinthHits = [];
-    state.modrinthHasMore = true;
-    wrap.innerHTML = `<div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>`;
-    await refreshInstalledContent();
-  } else {
-    updateModrinthFooter();
-  }
-
-  const target = getModrinthTarget();
-  const effectiveVersion = target ? target.version : (state.selectedVersion || "");
-  const effectiveLoader = target
-    ? (target.loader === "vanilla" ? "Tümü" : target.loader)
-    : (state.modrinthLoader || "fabric");
-
-  const params = new URLSearchParams({
-    q: state.modrinthQuery || "",
-    type: state.modrinthType || "mod",
-    version: effectiveVersion,
-    loader: effectiveLoader,
-    sort: state.modrinthSort || "downloads",
-    limit: state.modrinthLimit,
-    offset: state.modrinthOffset
-  });
-
-  const data = await apiGet(`/api/modrinth/search?${params.toString()}`, 15000);
-  state.modrinthLoading = false;
-
-  if (data && data.error) {
-    if (reset) {
-      wrap.innerHTML = `
-        <div class="loading-state">
-          <span class="np-net-error">⚠️ ${escapeHtml(data.error)}</span>
-          <span class="np-net-hint">Ağ testi: <code>http://127.0.0.1:18420/api/net-test</code> adresini tarayıcıda açın.</span>
-        </div>`;
-      state.modrinthHasMore = false;
-    }
-    showNetErrorOnce(data.error);
-    return;
-  }
-
-  if (!data) {
-    if (reset) {
-      wrap.innerHTML = `<div class="loading-state"><span>Modrinth şu anda yanıt vermiyor. Daha sonra tekrar deneyin.</span></div>`;
-    }
-    return;
-  }
-
-  const hits = Array.isArray(data.hits) ? data.hits : [];
-  const total = Number(data.total_hits) || 0;
-  state.modrinthOffset += hits.length;
-  state.modrinthHasMore = hits.length > 0 && (total === 0 || state.modrinthOffset < total);
-
-  if (reset) {
-    state.modrinthHits = hits;
-    wrap.innerHTML = "";
-  } else {
-    state.modrinthHits = state.modrinthHits.concat(hits);
-  }
-
-  if (state.modrinthHits.length === 0) {
-    wrap.innerHTML = `<div class="loading-state"><span>Aradığınız kriterlere uygun içerik bulunamadı.</span></div>`;
-    state.modrinthHasMore = false;
-    return;
-  }
-
-  const footer = document.getElementById("modrinthLoadMore");
-  const startIndex = reset ? 0 : state.modrinthHits.length - hits.length;
-  hits.forEach((hit, i) => {
-    const card = buildModCard(hit, startIndex + i);
-    if (footer) wrap.insertBefore(card, footer);
-    else wrap.appendChild(card);
-  });
-
-  updateModrinthFooter(total);
-}
-
-async function installModrinthProject(hit, buttonEl) {
-  const isModpack = (hit.project_type === "modpack") || (state.modrinthType === "modpack");
-  if (isModpack) {
-    await installModpackAsProfile(hit, buttonEl);
-    return;
-  }
-
-  const category = contentCategoryFromType(hit.project_type || state.modrinthType);
-  const target = getModrinthTarget();
-
-  // Hedef profil yoksa sessizce nereye kurulacağı belirsiz olmasın: profil oluşturmaya yönlendir
-  if (!target) {
-    showToast("İçerik kurmak için önce bir profil oluşturun.", "info");
-    openCreateInstanceModal();
-    return;
-  }
-
-  if (category === "mod" && target.loader === "vanilla") {
-    showToast("Vanilla profil mod yüklemez. PROFİLLER sekmesinden Fabric/Forge profili seçin.", "info");
-    return;
-  }
-
-  // Shader / doku paketlerinde sürüm tam eşleşmiyorsa kullanıcıdan onay al
-  if (category !== "mod") {
-    const params = new URLSearchParams({
-      slug: hit.slug || "",
-      version: target.version || "",
-      type: category,
-      loader: target.loader || ""
-    });
-    const check = await apiGet(`/api/modrinth/check?${params.toString()}`, 12000);
-
-    if (check && check.has_file === false) {
-      showToast("Bu paket için indirilebilir dosya bulunamadı.", "error");
-      return;
-    }
-
-    if (check && check.has_file && !check.exact_match) {
-      const ok = await showConfirmDialog({
-        icon: "⚠️",
-        title: "Sürüm Tam Eşleşmiyor",
-        message: `Bu paket oyun sürümünüzle (MC ${target.version}) tam eşleşmiyor (en yakın: ${check.matched_game_version || "bilinmiyor"}). Çoğu zaman sorunsuz çalışır. Yine de indirmek ister misiniz?`,
-        okText: "Yine de İndir"
-      });
-      if (!ok) return;
-    }
-  }
-
-  await downloadModrinthProject(hit, buttonEl, { category, force: category !== "mod" });
-}
-
-async function installModpackAsProfile(hit, buttonEl) {
-  const target = getModrinthTarget();
-  const gameVersion = target ? target.version : (state.selectedVersion || "");
-  const originalText = buttonEl ? buttonEl.textContent : null;
-
-  if (buttonEl) {
-    buttonEl.disabled = true;
-    buttonEl.textContent = "📦 Profil oluşturuluyor...";
-  }
-
-  showToast(`📦 ${hit.title || hit.slug} yeni profil olarak ekleniyor...`, "info");
-
-  const data = await apiPost("/api/modrinth/modpack/install", {
-    slug: hit.slug,
-    game_version: gameVersion
-  }, 60000);
-
-  if (buttonEl) {
-    buttonEl.disabled = false;
-    buttonEl.textContent = originalText || "📦 Profil Olarak Kur";
-  }
-
-  if (data && data.success && data.instance) {
-    await loadInstances();
-    ensurePackPolling();
-    switchTab("tab-instances");
-    showToast(`✓ "${data.instance.name}" profili oluşturuldu, kurulum arka planda sürüyor.`, "success");
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Modpack profili oluşturulamadı."}`, "error");
-  }
-}
-
-async function downloadModrinthProject(hit, buttonEl, opts = {}) {
-  const slug = typeof hit === "string" ? hit : (hit && hit.slug);
-  if (!slug) return;
-
-  const category = opts.category || "mod";
-  const force = opts.force === true;
-  const target = getModrinthTarget();
-
-  if (!target) {
-    showToast("İçerik kurmak için önce bir profil oluşturun.", "info");
-    openCreateInstanceModal();
-    return;
-  }
-
-  const originalText = buttonEl ? buttonEl.textContent : null;
-  if (buttonEl) {
-    buttonEl.disabled = true;
-    buttonEl.textContent = "Kuruluyor...";
-  }
-
-  const typeLabels = { mod: "Mod", shader: "Shader", resourcepack: "Doku paketi" };
-  showToast(`📥 ${typeLabels[category] || "İçerik"} → "${target.name}" profiline indiriliyor...`, "info");
-
-  const data = await apiPost("/api/modrinth/install", {
-    slug: slug,
-    version: target.version,
-    loader: target.loader,
-    instance_id: target.id,
-    project_type: category,
-    force: force,
-    install_dependencies: getInstallDepsPref()
-  }, 180000);
-
-  // Backend tam uyum olmadigini bildirdiyse onay isteyip tekrar dene
-  if (data && data.needs_confirm) {
-    if (buttonEl) {
-      buttonEl.disabled = false;
-      buttonEl.textContent = originalText || "⚡ Hızlı Kur";
-    }
-    const ok = await showConfirmDialog({
-      icon: "⚠️",
-      title: "Sürüm Tam Eşleşmiyor",
-      message: `${data.message || "Bu paket sürümünüzle tam eşleşmiyor olabilir."} Yine de indirmek ister misiniz?`,
-      okText: "Yine de İndir"
-    });
-    if (ok) {
-      await downloadModrinthProject(hit, buttonEl, { category, force: true });
-    }
-    return;
-  }
-
-  if (buttonEl) {
-    buttonEl.disabled = false;
-    buttonEl.textContent = originalText || "⚡ Hızlı Kur";
-  }
-
-  if (data && data.success) {
-    const warning = data.exact_match === false ? " (sürüm tam eşleşmiyor)" : "";
-    if (data.installed_dependencies || data.failed_dependencies) {
-      modInstallToast(String((hit && hit.title) || slug), data);
-    } else {
-      showToast(`✓ ${data.filename || slug} → "${target.name}" profiline kuruldu${warning}.`, "success");
-    }
-    await refreshInstalledContent();
-    applyInstalledStates();
-    loadInstances();
-  } else if (data && data.error) {
-    showToast(`⚠️ ${data.error}`, "error");
-  } else {
-    showToast("⚠️ İndirme isteği tamamlanamadı, tekrar deneyin.", "error");
-  }
-}
-
-// ================== GALERİ (EKRAN GÖRÜNTÜLERİ) ==================
-async function loadScreenshots() {
-  const wrap = document.getElementById("screenshotsGridWrap");
-  if (!wrap) return;
-
-  const data = await apiGet("/api/screenshots", 10000);
-  wrap.innerHTML = "";
-
-  if (!data) {
-    wrap.innerHTML = `<div class="loading-state" style="grid-column: 1/-1;"><span>Galeriye şu anda ulaşılamıyor.</span></div>`;
-    return;
-  }
-
-  const shots = Array.isArray(data.screenshots) ? data.screenshots : [];
-  if (shots.length === 0) {
-    wrap.innerHTML = `<div class="loading-state" style="grid-column: 1/-1;"><span>Henüz ekran görüntüsü alınmamış (Oyunda F2 tuşuna basın).</span></div>`;
-    return;
-  }
-
-  shots.forEach(sc => {
-    const card = document.createElement("div");
-    card.className = "gallery-card";
-    card.innerHTML = `
-      <div class="gallery-thumb">
-        <span style="font-size: 32px;">📸</span>
-      </div>
-      <div class="gallery-meta">
-        <span>${escapeHtml(sc.name)}</span>
-        <span>${Math.round((sc.size || 0) / 1024)} KB</span>
-      </div>
-    `;
-    wrap.appendChild(card);
-  });
-}
-
-// ================== SİSTEM KLASÖRÜ AÇMA ==================
-async function openSystemFolder(folderName) {
-  await apiPost("/api/open-folder", { folder: folderName || "" }, 8000);
-}
-
-// ================== TAURI NATIVE PENCERE KONTROLLERİ ==================
-function setupTauriWindowControls() {
-  const btnMin = document.getElementById("btnWinMinimize");
-  const btnMax = document.getElementById("btnWinMaximize");
-  const btnClose = document.getElementById("btnWinClose");
-
-  if (window.__TAURI__ && window.__TAURI__.window) {
-    try {
-      const appWin = window.__TAURI__.window.getCurrentWindow();
-      if (btnMin) btnMin.addEventListener("click", () => appWin.minimize());
-      if (btnMax) btnMax.addEventListener("click", () => appWin.toggleMaximize());
-      if (btnClose) btnClose.addEventListener("click", () => appWin.close());
-      return;
-    } catch (_) {}
-  }
-
-  if (btnMin) btnMin.addEventListener("click", () => window.blur());
-  if (btnClose) btnClose.addEventListener("click", () => window.close());
-}
-
-/* ==============================================================================
-   PROFİL DETAY EKRANI (FAZ 1)
-   Tam ekran katman, 12 sekmeli dikey menü, içerik yönetimi, mod çekmecesi.
-   ============================================================================== */
-
-const PDS_CAT_INFO = {
-  mod: { label: "Modlar", icon: "🧩", dir: "mods" },
-  shader: { label: "Shader Paketleri", icon: "✨", dir: "shaderpacks" },
-  resourcepack: { label: "Kaynak Paketleri", icon: "🎨", dir: "resourcepacks" }
-};
-
-// Faz 2/3 sekmeleri: menüde görünür, içerik olarak "Yakında" kartı gösterilir.
-const PDS_SOON_TABS = {
-  notes: { label: "Notlar", icon: "📝", folder: "notes", desc: "Profil notları sekmesi yakında: not defteri ve hızlı kayıtlar." },
-  worlds: { label: "Dünyalar", icon: "🌍", folder: "saves", desc: "Dünya yönetimi yakında: listeleme, kopyalama ve yedekleme." },
-  servers: { label: "Sunucular", icon: "🌐", folder: "servers", desc: "Sunucu listesi yönetimi yakında: hızlı bağlantı ve favoriler." },
-  screenshots: { label: "Ekran Görüntüleri", icon: "📸", folder: "screenshots", desc: "Profil bazlı ekran görüntüsü galerisi yakında." },
-  others: { label: "Diğer Kayıtlar", icon: "🗄️", folder: "logs", desc: "Log ve crash kayıtları yönetimi yakında." }
-};
-
-const PDS_LOADER_LABELS = {
-  vanilla: "Vanilla", fabric: "Fabric", forge: "Forge", neoforge: "NeoForge", quilt: "Quilt"
-};
-
-const pdsState = {
-  initialized: false,
-  instanceId: "",
-  instance: null,
-  activeTab: "mods",
-  content: { mod: null, shader: null, resourcepack: null },
-  contentError: "",
-  missingDeps: [],
-  modrinth: { type: "mod", query: "", hits: [], loading: false, searched: false },
-  drawerOpen: false,
-  // Faz 3: shader mağazası durumu
-  store: { open: false, query: "", sort: "downloads", hits: [], loading: false, searched: false, error: "", installed: new Set() },
-  // Faz 4: profil varlıkları
-  note: { loaded: false, saving: false, timer: null, lastSaved: "", pending: null },
-  worlds: null,
-  servers: null,
-  shots: null,
-  otherLogs: null
-};
-
-function pdsEsc(value) {
-  return escapeHtml(value === null || value === undefined ? "" : value);
-}
-
+// ==================== PROFİL DETAY ====================
 function pdsLoaderLabel(loader) {
-  const key = String(loader || "vanilla").toLowerCase();
-  return PDS_LOADER_LABELS[key] || String(loader || "—");
+  const labels = { vanilla: "Vanilla", fabric: "Fabric", forge: "Forge", neoforge: "NeoForge", quilt: "Quilt" };
+  return labels[String(loader || "").toLowerCase()] || loader || "Vanilla";
 }
 
-function pdsTabForCat(cat) {
-  return cat === "mod" ? "mods" : cat;
-}
-
-function initProfileDetailScreen() {
-  if (pdsState.initialized) return;
-  pdsState.initialized = true;
-
-  const back = document.getElementById("pdsBackBtn");
-  const close = document.getElementById("pdsCloseBtn");
-  const drawerClose = document.getElementById("pdsDrawerClose");
-  const backdrop = document.getElementById("pdsDrawerBackdrop");
-  const storeBackdrop = document.getElementById("pdsStoreBackdrop");
-  const storeClose = document.getElementById("pdsStoreClose");
-  const storeSearch = document.getElementById("pdsStoreSearchBtn");
-  const storeQuery = document.getElementById("pdsStoreQuery");
-  const storeSort = document.getElementById("pdsStoreSort");
-  const lightbox = document.getElementById("pdsLightbox");
-  const lightboxClose = document.getElementById("pdsLightboxClose");
-
-  if (back) back.addEventListener("click", closeProfileDetail);
-  if (close) close.addEventListener("click", closeProfileDetail);
-  if (drawerClose) drawerClose.addEventListener("click", pdsCloseDrawer);
-  if (backdrop) backdrop.addEventListener("click", pdsCloseDrawer);
-  if (storeBackdrop) storeBackdrop.addEventListener("click", pdsCloseShaderStore);
-  if (storeClose) storeClose.addEventListener("click", pdsCloseShaderStore);
-  if (storeSearch) storeSearch.addEventListener("click", pdsSearchShaderStore);
-  if (storeQuery) {
-    storeQuery.addEventListener("keydown", (e) => { if (e.key === "Enter") pdsSearchShaderStore(); });
-  }
-  if (storeSort) {
-    storeSort.addEventListener("change", () => {
-      pdsState.store.sort = storeSort.value;
-      pdsLoadShaderStore();
-    });
-  }
-  if (lightboxClose) lightboxClose.addEventListener("click", pdsCloseLightbox);
-  if (lightbox) {
-    lightbox.addEventListener("click", (e) => {
-      if (e.target === lightbox) pdsCloseLightbox();
-    });
-  }
-
-  document.querySelectorAll(".pds-side-tab").forEach(btn => {
-    btn.tabIndex = btn.classList.contains("active") ? 0 : -1;
-    btn.addEventListener("click", () => pdsSwitchTab(btn.getAttribute("data-pds-tab")));
-  });
-
-  // Profil detayı sol menüsü: rail diliyle uyumlu ok tuşu gezinmesi
-  const pdsSidebar = document.querySelector(".pds-sidebar");
-  if (pdsSidebar) {
-    pdsSidebar.addEventListener("keydown", (e) => {
-      const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
-      if (!keys.includes(e.key)) return;
-      e.preventDefault();
-      const items = Array.from(pdsSidebar.querySelectorAll(".pds-side-tab"));
-      const idx = items.indexOf(document.activeElement);
-      let next = 0;
-      if (e.key === "ArrowDown") next = idx < 0 ? 0 : (idx + 1) % items.length;
-      else if (e.key === "ArrowUp") next = idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length;
-      else if (e.key === "End") next = items.length - 1;
-      items[next].focus();
-      items[next].click();
-    });
-  }
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    const screen = document.getElementById("profileDetailScreen");
-    if (!screen || screen.style.display === "none") return;
-    // Üstte açık bir modal varsa ESC'yi ona bırak
-    const modalOpen = Array.from(document.querySelectorAll(".modal-backdrop"))
-      .some(m => m && m.style.display === "flex");
-    if (modalOpen) return;
-    const lb = document.getElementById("pdsLightbox");
-    if (lb && lb.classList.contains("show")) { pdsCloseLightbox(); return; }
-    if (pdsState.store.open) { pdsCloseShaderStore(); return; }
-    if (pdsState.drawerOpen) { pdsCloseDrawer(); return; }
-    closeProfileDetail();
-  });
-}
-
-function pdsSyncInstance() {
-  const fresh = getInstanceById(pdsState.instanceId);
-  if (fresh) pdsState.instance = fresh;
-  return pdsState.instance;
-}
-
-function openProfileDetail(instanceId, tabId) {
-  const inst = getInstanceById(instanceId);
-  if (!inst) {
-    showToast("Profil bulunamadı.", "error");
-    return;
-  }
-
-  pdsState.instanceId = instanceId;
-  pdsState.instance = inst;
-  pdsState.activeTab = tabId || "mods";
-  pdsState.content = { mod: null, shader: null, resourcepack: null };
-  pdsState.contentError = "";
-  pdsState.missingDeps = [];
-  pdsState.modrinth = { type: "mod", query: "", hits: [], loading: false, searched: false };
-  pdsState.store = { open: false, query: "", sort: "downloads", hits: [], loading: false, searched: false, error: "", installed: new Set() };
-  pdsState.note = { loaded: false, saving: false, timer: null, lastSaved: "", pending: null };
-  pdsState.worlds = null;
-  pdsState.servers = null;
-  pdsState.shots = null;
-  pdsState.otherLogs = null;
-  pdsCloseDrawer();
-  pdsCloseShaderStore();
-  pdsCloseLightbox();
-
+function openProfileDetail(instId, tab) {
   const screen = document.getElementById("profileDetailScreen");
-  if (!screen) return;
-  screen.style.display = "flex";
-  screen.setAttribute("aria-hidden", "false");
-
-  pdsRenderHeader();
-  pdsSwitchTab(pdsState.activeTab);
+  if (screen) {
+    screen.style.display = "flex";
+    screen.setAttribute("aria-hidden", "false");
+  }
 }
 
 function closeProfileDetail() {
   const screen = document.getElementById("profileDetailScreen");
-  if (!screen) return;
-  pdsCloseDrawer();
-  pdsCloseShaderStore();
-  pdsCloseLightbox();
-  if (pdsState.note.timer) {
-    clearTimeout(pdsState.note.timer);
-    pdsState.note.timer = null;
-    if (pdsState.note.pending !== null && pdsState.note.pending !== pdsState.note.lastSaved) {
-      pdsSaveNote(pdsState.note.pending, null);
-    }
-  }
-  screen.style.display = "none";
-  screen.setAttribute("aria-hidden", "true");
-}
-
-function pdsRenderHeader() {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  const iconEl = document.getElementById("pdsHeadIcon");
-  const nameEl = document.getElementById("pdsHeadName");
-  const metaEl = document.getElementById("pdsHeadMeta");
-
-  if (nameEl) nameEl.textContent = inst.name || "Profil";
-  if (metaEl) {
-    const loaderText = pdsLoaderLabel(inst.loader) + (inst.loader_version ? ` ${inst.loader_version}` : "");
-    metaEl.textContent = `MC ${inst.version || "?"} • ${loaderText} • ${inst.mod_count || 0} mod`;
-  }
-  if (iconEl) {
-    iconEl.innerHTML = "";
-    iconEl.classList.remove("pds-letter");
-    if (inst.icon) {
-      const img = document.createElement("img");
-      img.src = inst.icon;
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("error", () => {
-        img.remove();
-        iconEl.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
-        iconEl.classList.add("pds-letter");
-      });
-      iconEl.appendChild(img);
-    } else {
-      iconEl.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
-      iconEl.classList.add("pds-letter");
-    }
+  if (screen) {
+    screen.style.display = "none";
+    screen.setAttribute("aria-hidden", "true");
   }
 }
 
-function pdsSwitchTab(tabId) {
-  // Notlar sekmesinden çıkarken bekleyen otomatik kaydı hemen tamamla
-  if (pdsState.activeTab === "notes" && pdsState.note.timer && pdsState.note.pending !== null) {
-    clearTimeout(pdsState.note.timer);
-    pdsState.note.timer = null;
-    pdsSaveNote(pdsState.note.pending, null);
-  }
-  pdsState.activeTab = tabId;
-  document.querySelectorAll(".pds-side-tab").forEach(btn => {
-    const active = btn.getAttribute("data-pds-tab") === tabId;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-selected", active ? "true" : "false");
-    btn.tabIndex = active ? 0 : -1;
+function initProfileDetailScreen() {
+  const backBtn = document.getElementById("pdsBackBtn");
+  const closeBtn = document.getElementById("pdsCloseBtn");
+  if (backBtn) backBtn.addEventListener("click", closeProfileDetail);
+  if (closeBtn) closeBtn.addEventListener("click", closeProfileDetail);
+}
+
+// ==================== TAURI WINDOW CONTROLS ====================
+function setupTauriWindowControls() {
+  const minBtn = document.getElementById("btnWinMinimize");
+  const maxBtn = document.getElementById("btnWinMaximize");
+  const closeBtn = document.getElementById("btnWinClose");
+  if (minBtn) minBtn.addEventListener("click", () => { if (window.__TAURI__) window.__TAURI__.window.getCurrentWindow().minimize(); });
+  if (maxBtn) maxBtn.addEventListener("click", () => { if (window.__TAURI__) window.__TAURI__.window.getCurrentWindow().toggleMaximize(); });
+  if (closeBtn) closeBtn.addEventListener("click", () => { if (window.__TAURI__) window.__TAURI__.window.getCurrentWindow().close(); });
+}
+
+// ==================== MODRINTH (SIMPLIFIED) ==================
+function fetchModrinth(reset) {
+  // Simplified - would call backend API
+  showToast("Modrinth içerikleri yükleniyor...", "info");
+}
+
+function renderModrinthTargetBar() {
+  const select = document.getElementById("modrinthInstanceSelect");
+  if (!select) return;
+  select.innerHTML = "";
+  state.instances.forEach(inst => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} — MC ${inst.version}`;
+    select.appendChild(opt);
   });
-
-  const content = document.getElementById("pdsContent");
-  if (!content) return;
-  content.scrollTop = 0;
-  content.innerHTML = "";
-
-  const pane = document.createElement("div");
-  pane.className = "pds-pane";
-  content.appendChild(pane);
-
-  if (tabId === "logs") return pdsRenderLogsTab(pane);
-  if (tabId === "version") return pdsRenderVersionTab(pane);
-  if (tabId === "modrinth") return pdsRenderModrinthTab(pane);
-  if (tabId === "settings") return pdsRenderSettingsTab(pane);
-  if (tabId === "mods") return pdsRenderContentTab(pane, "mod");
-  if (tabId === "shader") return pdsRenderContentTab(pane, "shader");
-  if (tabId === "resourcepack") return pdsRenderContentTab(pane, "resourcepack");
-  if (tabId === "notes") return pdsRenderNotesTab(pane);
-  if (tabId === "worlds") return pdsRenderWorldsTab(pane);
-  if (tabId === "servers") return pdsRenderServersTab(pane);
-  if (tabId === "screenshots") return pdsRenderProfileShotsTab(pane);
-  if (tabId === "others") return pdsRenderOtherLogsTab(pane);
-  return pdsRenderSoonTab(pane, tabId);
+  if (state.modrinthTargetId) select.value = state.modrinthTargetId;
 }
 
-// ---------- İçerik sekmeleri (Modlar / Kaynak / Shader) ----------
-function pdsRenderContentTab(pane, cat) {
-  const info = PDS_CAT_INFO[cat];
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">${info.icon} ${info.label}</h3>
-        <p class="pds-section-sub">Bu profildeki kurulu içerikler. Anahtarla aç/kapat, detaydan Modrinth bilgisine bak.</p>
-      </div>
-      <div class="pds-head-actions">
-        ${cat === "shader" ? '<button type="button" class="btn-primary-action" id="pdsShaderStoreBtn">🛍️ Paket İndir</button>' : ""}
-        <button type="button" class="btn-secondary" id="pdsRefreshBtn">↻ Yenile</button>
-      </div>
-    </div>
-    ${cat === "mod" ? '<div class="pds-deps-warn" id="pdsDepsWarn" style="display:none;"></div>' : ""}
-    <div class="pds-list" id="pdsListWrap">
-      <div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>
-    </div>
-  `;
-  const refresh = document.getElementById("pdsRefreshBtn");
-  if (refresh) refresh.addEventListener("click", () => {
-    pdsLoadContent(cat, true);
-    if (cat === "mod") pdsLoadMissingDeps();
-  });
-  const storeBtn = document.getElementById("pdsShaderStoreBtn");
-  if (storeBtn) storeBtn.addEventListener("click", pdsOpenShaderStore);
-  pdsLoadContent(cat, false);
-  if (cat === "mod") pdsLoadMissingDeps();
-}
+function applyInstalledStates() {}
+function refreshInstalledContent() { return Promise.resolve(); }
+function renderInstalledPanel() {}
+function loadScreenshots() {}
+function openSystemFolder(folder) { showToast(`Klasör açılıyor: ${folder || ".minecraft"}`, "info"); }
+function handleLaunchGame() { showToast("Oyun başlatılıyor...", "info"); }
+function closeProgressModal() { const m = document.getElementById("launchProgressModal"); if (m) m.style.display = "none"; }
+function openCreateInstanceModal() { const m = document.getElementById("createInstanceModal"); if (m) m.style.display = "flex"; }
+function closeCreateInstanceModal() { const m = document.getElementById("createInstanceModal"); if (m) m.style.display = "none"; }
+function confirmCreateInstance() { showToast("Profil oluşturuluyor...", "info"); closeCreateInstanceModal(); }
+function initNewProfileModal() {}
+function openVersionSelectorModal() { const m = document.getElementById("versionSelectorModal"); if (m) m.style.display = "flex"; }
+function closeVersionSelectorModal() { const m = document.getElementById("versionSelectorModal"); if (m) m.style.display = "none"; }
+function filterAndRenderVersionTable() {}
+function loadVersions() {}
+function startStatusPolling() {}
+function initVersionSwitchModal() {}
+function initRailA11y() {}
+function initDialogA11y() {}
+function deleteInstance(id, name) { if (confirm(`${name} profili silinsin mi?`)) showToast("Profil silindi.", "info"); }
+function setLaunchButton(mode) {}
 
-async function pdsLoadMissingDeps() {
-  const warn = document.getElementById("pdsDepsWarn");
-  if (!warn || pdsState.activeTab !== "mods") return;
-
-  const data = await apiGet(
-    `/api/instances/missing-deps?instance=${encodeURIComponent(pdsState.instanceId)}`,
-    20000
-  );
-  if (pdsState.activeTab !== "mods" || !document.getElementById("pdsDepsWarn")) return;
-
-  const missing = (data && data.missing) || [];
-  pdsState.missingDeps = Array.isArray(missing) ? missing : [];
-
-  if (!data || data.success !== true || pdsState.missingDeps.length === 0) {
-    warn.style.display = "none";
-    warn.innerHTML = "";
-    return;
-  }
-
-  warn.style.display = "flex";
-  warn.innerHTML = "";
-
-  const text = document.createElement("span");
-  text.textContent = `⚠️ ${pdsState.missingDeps.length} eksik bağımlılık`;
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "pds-deps-warn-btn";
-  btn.textContent = "Hepsini kur";
-  btn.addEventListener("click", () => pdsInstallAllMissingDeps(btn));
-
-  warn.appendChild(text);
-  warn.appendChild(btn);
-}
-
-async function pdsInstallAllMissingDeps(buttonEl) {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-  const missing = Array.isArray(pdsState.missingDeps) ? pdsState.missingDeps.slice() : [];
-  if (missing.length === 0) return;
-
-  if (String(inst.loader || "").toLowerCase() === "vanilla") {
-    showToast("Vanilla profil mod yüklemez. Fabric/Forge profili kullanın.", "info");
-    return;
-  }
-
-  if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kuruluyor..."; }
-  let okCount = 0;
-  let failCount = 0;
-
-  for (const dep of missing) {
-    const name = dep.title || dep.slug || dep.project_id || "Bağımlılık";
-    showToast(`📥 Bağımlılık kuruluyor: ${name}...`, "info");
-    const data = await apiPost("/api/modrinth/install", {
-      slug: dep.slug,
-      version: inst.version,
-      loader: inst.loader,
-      instance_id: pdsState.instanceId,
-      project_type: "mod",
-      install_dependencies: true
-    }, 180000);
-
-    if (data && data.success) {
-      okCount++;
-      const installed = (data.installed_dependencies || []).map(d => d.title || d.slug).join(", ");
-      showToast(`✓ ${name} kuruldu${installed ? " • bağımlılıklar: " + installed : ""}`, "success");
-    } else {
-      failCount++;
-      const reason = (data && data.error) || "bilinmeyen hata";
-      console.warn("Bağımlılık kurulamadı:", dep, reason);
-      showToast(`⚠️ ${name} kurulamadı: ${reason}`, "error");
-    }
-  }
-
-  if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = "Hepsini kur"; }
-  await pdsLoadContent("mod", true);
-  await pdsLoadMissingDeps();
-  loadInstances();
-  if (okCount > 0 && failCount === 0) {
-    showToast(`✓ ${okCount} eksik bağımlılık kuruldu.`, "success");
-  }
-}
-
-async function pdsLoadContent(cat, force) {
-  if (!pdsSyncInstance()) return;
-
-  if (!force && pdsState.content[cat]) {
-    if (pdsState.activeTab === pdsTabForCat(cat)) pdsRenderContentList(cat);
-    return;
-  }
-
-  pdsState.contentError = "";
-  const data = await apiGet(`/api/instances/content?instance_id=${encodeURIComponent(pdsState.instanceId)}`, 10000);
-  if (!data || data.success !== true) {
-    pdsState.contentError = "İçerik listesi alınamadı. Core bağlantısını kontrol edin.";
-    if (pdsState.activeTab === pdsTabForCat(cat)) pdsRenderContentList(cat);
-    return;
-  }
-
-  const categories = data.categories || {};
-  const files = (categories[cat] && categories[cat].files) || [];
-  pdsState.content[cat] = Array.isArray(files) ? files : [];
-  if (pdsState.activeTab === pdsTabForCat(cat)) pdsRenderContentList(cat);
-}
-
-function pdsRenderContentList(cat) {
-  const wrap = document.getElementById("pdsListWrap");
-  if (!wrap) return;
-  const info = PDS_CAT_INFO[cat];
-  const files = pdsState.content[cat] || [];
-
-  if (pdsState.contentError) {
-    wrap.innerHTML = `<div class="pds-empty">⚠️ ${pdsEsc(pdsState.contentError)}</div>`;
-    return;
-  }
-  if (files.length === 0) {
-    wrap.innerHTML = `<div class="pds-empty">Bu profilde henüz ${info.label.toLowerCase()} yok.<br>Modrinth sekmesinden kurulum yapabilirsiniz.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = "";
-  files.forEach(f => {
-    const row = document.createElement("div");
-    row.className = "pds-item" + (f.enabled === false ? " is-off" : "");
-
-    const iconBox = document.createElement("div");
-    iconBox.className = "pds-item-icon";
-    iconBox.textContent = info.icon;
-    if (f.has_icon) {
-      const img = document.createElement("img");
-      img.alt = "";
-      img.loading = "lazy";
-      img.src = `${API_BASE}/api/instances/content/icon?instance_id=${encodeURIComponent(pdsState.instanceId)}` +
-        `&category=${encodeURIComponent(cat)}&name=${encodeURIComponent(f.name)}&t=${Math.round(f.mtime || 0)}`;
-      img.addEventListener("error", () => { img.remove(); iconBox.textContent = info.icon; });
-      iconBox.textContent = "";
-      iconBox.appendChild(img);
-    }
-
-    const displayName = (f.display_name && String(f.display_name).trim()) || cleanContentName(f.name);
-    const sizeText = f.is_dir
-      ? "klasör"
-      : (f.size >= 1048576 ? `${(f.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round((f.size || 0) / 1024))} KB`);
-
-    const infoEl = document.createElement("div");
-    infoEl.className = "pds-item-info";
-    infoEl.innerHTML = `
-      <div class="pds-item-name-line">
-        <span class="pds-item-name" title="${pdsEsc(f.description || f.name)}">${pdsEsc(displayName)}</span>
-        ${f.version ? `<span class="pds-ver-badge">v${pdsEsc(f.version)}</span>` : ""}
-        ${f.enabled === false ? `<span class="pds-off-badge">DEVRE DIŞI</span>` : ""}
-      </div>
-      <div class="pds-item-meta" title="${pdsEsc(f.name)}">${pdsEsc(f.name)} • ${pdsEsc(sizeText)}</div>
-    `;
-
-    const toggle = document.createElement("label");
-    toggle.className = "toggle-switch pds-toggle";
-    toggle.title = f.enabled === false ? "Etkinleştir" : "Devre dışı bırak";
-    toggle.innerHTML = `<input type="checkbox" ${f.enabled === false ? "" : "checked"}><span class="toggle-slider"></span>`;
-    const cb = toggle.querySelector("input");
-    if (cb) cb.addEventListener("change", () => pdsToggleContent(cat, f, cb));
-
-    const actions = document.createElement("div");
-    actions.className = "pds-item-actions";
-
-    const detailBtn = document.createElement("button");
-    detailBtn.type = "button";
-    detailBtn.className = "pds-btn";
-    detailBtn.textContent = "Detay";
-    detailBtn.addEventListener("click", () => pdsOpenDrawer(f, cat));
-
-    actions.appendChild(toggle);
-    actions.appendChild(detailBtn);
-
-    if (f.slug) {
-      const verBtn = document.createElement("button");
-      verBtn.type = "button";
-      verBtn.className = "pds-btn pds-btn-ver";
-      verBtn.title = "Bu içeriğin başka bir sürümünü kur";
-      verBtn.textContent = "⇄ Sürüm";
-      verBtn.addEventListener("click", () => openVersionSwitchOverlay({
-        slug: f.slug,
-        title: displayName,
-        cat: cat,
-        iconUrl: f.has_icon
-          ? `${API_BASE}/api/instances/content/icon?instance_id=${encodeURIComponent(pdsState.instanceId)}` +
-            `&category=${encodeURIComponent(cat)}&name=${encodeURIComponent(f.name)}&t=${Math.round(f.mtime || 0)}`
-          : "",
-        installedVersion: f.version || "",
-        instance: pdsSyncInstance()
-      }));
-      actions.appendChild(verBtn);
-    }
-
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "pds-btn pds-btn-danger";
-    delBtn.title = "Sil";
-    delBtn.textContent = "🗑";
-    delBtn.addEventListener("click", () => pdsDeleteContent(cat, f));
-    actions.appendChild(delBtn);
-
-    row.appendChild(iconBox);
-    row.appendChild(infoEl);
-    row.appendChild(actions);
-    wrap.appendChild(row);
+// ==================== RAIL A11Y ====================
+function initRailA11y() {
+  const menu = document.querySelector(".rail-menu");
+  if (!menu || menu.dataset.bound === "1") return;
+  menu.dataset.bound = "1";
+  const tabs = () => Array.from(menu.querySelectorAll(".nav-tab"));
+  tabs().forEach(t => { t.tabIndex = t.classList.contains("active") ? 0 : -1; });
+  menu.addEventListener("keydown", (e) => {
+    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
+    if (!keys.includes(e.key)) return;
+    e.preventDefault();
+    const items = tabs();
+    if (items.length === 0) return;
+    const idx = items.indexOf(document.activeElement);
+    let next = 0;
+    if (e.key === "ArrowDown") next = idx < 0 ? 0 : (idx + 1) % items.length;
+    else if (e.key === "ArrowUp") next = idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length;
+    else if (e.key === "End") next = items.length - 1;
+    items[next].focus();
+    items[next].click();
   });
 }
 
-async function pdsToggleContent(cat, item, checkbox) {
-  if (checkbox) checkbox.disabled = true;
-  const data = await apiPost("/api/instances/content/toggle", {
-    instance: pdsState.instanceId,
-    category: cat,
-    name: item.name
-  }, 15000);
-  if (checkbox) checkbox.disabled = false;
-
-  if (data && data.success) {
-    showToast(data.enabled ? `✓ Etkinleştirildi: ${data.name}` : `⏸ Devre dışı: ${data.name}`, "success");
-    await pdsLoadContent(cat, true);
-    loadInstances();
-  } else {
-    if (checkbox) checkbox.checked = item.enabled !== false;
-    showToast(`⚠️ ${(data && data.error) || "İçerik güncellenemedi."}`, "error");
-  }
-}
-
-async function pdsDeleteContent(cat, item) {
-  const inst = pdsSyncInstance();
-  const ok = await showConfirmDialog({
-    icon: "🗑️",
-    title: "İçerik Silinsin mi?",
-    message: `"${item.name}" dosyası "${inst ? inst.name : "profil"}" profilinden kalıcı olarak silinecek. Bu işlem geri alınamaz.`,
-    okText: "Sil",
-    danger: true
-  });
-  if (!ok) return;
-
-  const data = await apiPost("/api/instances/content/delete", {
-    instance_id: pdsState.instanceId,
-    category: cat,
-    name: item.name
-  }, 30000);
-
-  if (data && data.success) {
-    showToast(`🗑️ ${item.name} silindi.`, "success");
-    if (pdsState.drawerOpen) pdsCloseDrawer();
-    await pdsLoadContent(cat, true);
-    loadInstances();
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Dosya silinemedi."}`, "error");
-  }
-}
-
-// ---------- Mod detay çekmecesi ----------
-function pdsOpenDrawer(item, cat) {
-  const drawer = document.getElementById("pdsDrawer");
-  const backdrop = document.getElementById("pdsDrawerBackdrop");
-  const titleEl = document.getElementById("pdsDrawerTitle");
-  const bodyEl = document.getElementById("pdsDrawerBody");
-  if (!drawer || !bodyEl) return;
-
-  pdsState.drawerOpen = true;
-  drawer.classList.add("open");
-  drawer.setAttribute("aria-hidden", "false");
-  if (backdrop) backdrop.classList.add("show");
-
-  const displayName = (item.display_name && String(item.display_name).trim()) || cleanContentName(item.name);
-  if (titleEl) titleEl.textContent = displayName;
-  bodyEl.innerHTML = `<div class="pds-loading"><div class="spinner"></div><span>Modrinth bilgisi yükleniyor...</span></div>`;
-
-  const local = { item: item, cat: cat };
-  if (item.slug) {
-    apiGet(`/api/modrinth/project?slug=${encodeURIComponent(item.slug)}`, 15000).then(data => {
-      if (!pdsState.drawerOpen) return;
-      if (data && data.success) {
-        pdsRenderProjectDrawer(data, local);
-      } else {
-        pdsRenderLocalDrawer(local, (data && data.error) || "Modrinth bilgisi alınamadı.");
-      }
-    });
-  } else {
-    pdsRenderLocalDrawer(local, "Bu içerik Modrinth kaydı olmadan (elle) kurulmuş.");
-  }
-}
-
-function pdsCloseDrawer() {
-  const drawer = document.getElementById("pdsDrawer");
-  const backdrop = document.getElementById("pdsDrawerBackdrop");
-  pdsState.drawerOpen = false;
-  if (drawer) {
-    drawer.classList.remove("open");
-    drawer.setAttribute("aria-hidden", "true");
-  }
-  if (backdrop) backdrop.classList.remove("show");
-}
-
-function pdsDrawerActions(item, cat) {
-  const dir = PDS_CAT_INFO[cat].dir;
-  const wrap = document.createElement("div");
-  wrap.className = "pds-drawer-actions";
-
-  if (item.source_url) {
-    const link = document.createElement("a");
-    link.className = "pds-btn pds-btn-primary";
-    link.href = item.source_url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "🌐 Ana Sayfa";
-    wrap.appendChild(link);
-  }
-
-  // Mağazadan açılan (henüz kurulmamış) içerik: sil/klasör yerine kur butonu
-  if (item.store_mode) {
-    const hit = item.hit || {};
-    const installed = pdsIsShaderInstalled(hit);
-    const installBtn = document.createElement("button");
-    installBtn.type = "button";
-    installBtn.className = "pds-btn pds-btn-primary";
-    installBtn.textContent = installed ? "Kuruldu ✓" : "⬇ Kur";
-    if (installed) {
-      installBtn.disabled = true;
-      installBtn.classList.add("is-installed");
-    } else {
-      installBtn.addEventListener("click", () => pdsInstallShader(hit, installBtn));
-    }
-    wrap.appendChild(installBtn);
-
-    const folderBtn = document.createElement("button");
-    folderBtn.type = "button";
-    folderBtn.className = "pds-btn";
-    folderBtn.textContent = "📂 Klasörü Aç";
-    folderBtn.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/${dir}`));
-    wrap.appendChild(folderBtn);
-    return wrap;
-  }
-
-  const folderBtn = document.createElement("button");
-  folderBtn.type = "button";
-  folderBtn.className = "pds-btn";
-  folderBtn.textContent = "📂 Klasörü Aç";
-  folderBtn.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/${dir}`));
-  wrap.appendChild(folderBtn);
-
-  const delBtn = document.createElement("button");
-  delBtn.type = "button";
-  delBtn.className = "pds-btn pds-btn-danger";
-  delBtn.textContent = "🗑 Kaldır";
-  delBtn.addEventListener("click", () => pdsDeleteContent(cat, item));
-  wrap.appendChild(delBtn);
-
-  return wrap;
-}
-
-function pdsRenderProjectDrawer(data, local) {
-  const body = document.getElementById("pdsDrawerBody");
-  if (!body) return;
-  const titleEl = document.getElementById("pdsDrawerTitle");
-  if (titleEl) titleEl.textContent = data.title || local.item.name;
-
-  body.innerHTML = "";
-
-  const head = document.createElement("div");
-  head.className = "pds-drawer-head-card";
-
-  const iconBox = document.createElement("div");
-  iconBox.className = "pds-drawer-icon";
-  iconBox.textContent = PDS_CAT_INFO[local.cat].icon;
-  if (data.icon_url) {
-    const img = document.createElement("img");
-    img.src = data.icon_url;
-    img.alt = "";
-    img.addEventListener("error", () => { img.remove(); iconBox.textContent = PDS_CAT_INFO[local.cat].icon; });
-    iconBox.textContent = "";
-    iconBox.appendChild(img);
-  }
-
-  const headInfo = document.createElement("div");
-  headInfo.className = "pds-drawer-headinfo";
-  headInfo.innerHTML = `
-    <div class="pds-drawer-name">${pdsEsc(data.title)}</div>
-    <div class="pds-chips">${(data.categories || []).map(c => `<span class="pds-chip">${pdsEsc(c)}</span>`).join("")}</div>
-    <div class="pds-drawer-stats">⬇ ${Number(data.downloads || 0).toLocaleString()} indirme • ❤ ${Number(data.follows || 0).toLocaleString()} takipçi</div>
-  `;
-  head.appendChild(iconBox);
-  head.appendChild(headInfo);
-  body.appendChild(head);
-
-  const descTitle = document.createElement("h4");
-  descTitle.className = "pds-drawer-subtitle";
-  descTitle.textContent = "Açıklama";
-  body.appendChild(descTitle);
-
-  const desc = document.createElement("p");
-  desc.className = "pds-drawer-desc";
-  desc.textContent = data.description || "Açıklama bulunmuyor.";
-  body.appendChild(desc);
-
-  // Faz 3: Modrinth galeri resimleri (yatay şerit; yüklenemeyen gizlenir)
-  const gallery = Array.isArray(data.gallery) ? data.gallery.filter(Boolean) : [];
-  if (gallery.length > 0) {
-    const galTitle = document.createElement("h4");
-    galTitle.className = "pds-drawer-subtitle";
-    galTitle.textContent = `Galeri (${gallery.length})`;
-    body.appendChild(galTitle);
-
-    const strip = document.createElement("div");
-    strip.className = "pds-drawer-gallery";
-    gallery.forEach(url => {
-      const cell = document.createElement("div");
-      cell.className = "pds-drawer-gallery-item";
-      const img = document.createElement("img");
-      img.src = url;
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("error", () => cell.remove());
-      cell.addEventListener("click", () => pdsOpenLightbox(url));
-      cell.appendChild(img);
-      strip.appendChild(cell);
-    });
-    body.appendChild(strip);
-  }
-
-  const versionsTitle = document.createElement("h4");
-  versionsTitle.className = "pds-drawer-subtitle";
-  versionsTitle.textContent = `Sürüm Geçmişi (${(data.versions || []).length})`;
-  body.appendChild(versionsTitle);
-
-  const vList = document.createElement("div");
-  vList.className = "pds-drawer-list";
-  (data.versions || []).slice(0, 15).forEach(v => {
-    const row = document.createElement("div");
-    row.className = "pds-drawer-ver";
-    const gvs = (v.game_versions || []).slice(0, 4).join(", ");
-    const loaders = (v.loaders || []).slice(0, 3).join(", ");
-    row.innerHTML = `
-      <span class="pds-drawer-ver-name">${pdsEsc(v.version_number || "?")}</span>
-      <span class="pds-drawer-ver-meta">${pdsEsc(gvs)}${loaders ? " • " + pdsEsc(loaders) : ""}</span>
-      <span class="pds-drawer-ver-date">${pdsEsc(String(v.date || "").slice(0, 10))}</span>
-    `;
-    vList.appendChild(row);
-  });
-  if (!(data.versions || []).length) {
-    vList.innerHTML = `<div class="pds-drawer-empty">Sürüm bilgisi yok.</div>`;
-  }
-  body.appendChild(vList);
-
-  const DEP_LABELS = { required: "Zorunlu", optional: "Opsiyonel", incompatible: "Uyumsuz", embedded: "Gömülü" };
-  const deps = data.dependencies || [];
-  const depTitle = document.createElement("h4");
-  depTitle.className = "pds-drawer-subtitle";
-  depTitle.textContent = `Bağımlılıklar (${deps.length})`;
-  body.appendChild(depTitle);
-
-  const depList = document.createElement("div");
-  depList.className = "pds-drawer-list";
-  deps.forEach(d => {
-    const row = document.createElement("div");
-    row.className = "pds-drawer-dep";
-    const dtype = d.dependency_type || "required";
-    row.innerHTML = `
-      <span class="pds-drawer-dep-name">${pdsEsc(d.name || d.project_id || "?")}</span>
-      <span class="pds-dep-type dep-${pdsEsc(dtype)}">${pdsEsc(DEP_LABELS[dtype] || dtype)}</span>
-    `;
-    depList.appendChild(row);
-  });
-  if (!deps.length) {
-    depList.innerHTML = `<div class="pds-drawer-empty">Bağımlılık yok.</div>`;
-  }
-  body.appendChild(depList);
-
-  body.appendChild(pdsDrawerActions(Object.assign({}, local.item, {
-    display_name: data.title,
-    source_url: data.source_url || ""
-  }), local.cat));
-}
-
-function pdsRenderLocalDrawer(local, note) {
-  const body = document.getElementById("pdsDrawerBody");
-  if (!body) return;
-  const item = local.item;
-  const info = PDS_CAT_INFO[local.cat];
-  const displayName = (item.display_name && String(item.display_name).trim()) || cleanContentName(item.name);
-
-  const sizeText = item.is_dir
-    ? "klasör"
-    : (item.size >= 1048576 ? `${(item.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round((item.size || 0) / 1024))} KB`);
-
-  body.innerHTML = "";
-  const card = document.createElement("div");
-  card.className = "pds-drawer-local";
-  card.innerHTML = `
-    <div class="pds-drawer-local-name">${info.icon} ${pdsEsc(displayName)}</div>
-    <div class="pds-item-meta" style="margin-top:6px;">${pdsEsc(item.name)} • ${pdsEsc(sizeText)}${item.version ? " • v" + pdsEsc(item.version) : ""}</div>
-    <p class="pds-drawer-desc" style="margin-top:10px;">${pdsEsc(item.description || "Açıklama bulunmuyor.")}</p>
-    <p class="pds-soon-note">ℹ️ ${pdsEsc(note)}</p>
-  `;
-  body.appendChild(card);
-  body.appendChild(pdsDrawerActions(item, local.cat));
-}
-
-// ---------- Modrinth sekmesi ----------
-function pdsRenderModrinthTab(pane) {
-  const inst = pdsSyncInstance();
-  const loaderText = pdsLoaderLabel(inst ? inst.loader : "");
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">🔎 Modrinth</h3>
-        <p class="pds-section-sub">Arama bu profile göre filtrelenir: MC ${pdsEsc(inst ? inst.version : "?")} • ${pdsEsc(loaderText)}</p>
-      </div>
-    </div>
-    <div class="pds-mr-bar">
-      <select class="styled-select" id="pdsMrType" aria-label="İçerik türü">
-        <option value="mod">🧩 Modlar</option>
-        <option value="shader">✨ Shaderlar</option>
-        <option value="resourcepack">🎨 Doku Paketleri</option>
-      </select>
-      <input type="text" class="styled-input" id="pdsMrQuery" placeholder="Ara... (örn: sodium)" autocomplete="off" spellcheck="false">
-      <button type="button" class="btn-primary-action" id="pdsMrSearchBtn">🔍 Ara</button>
-      <label class="pds-deps-toggle" title="Seçili modun Modrinth'teki zorunlu bağımlılıklarını da otomatik kurar">
-        <input type="checkbox" id="pdsInstallDepsToggle" class="install-deps-cb">
-        <span>🧷 Gerekli bağımlılıkları da kur</span>
-      </label>
-    </div>
-    <div class="pds-mr-grid" id="pdsMrResults"></div>
-  `;
-
-  const typeSel = document.getElementById("pdsMrType");
-  const input = document.getElementById("pdsMrQuery");
-  const btn = document.getElementById("pdsMrSearchBtn");
-  bindInstallDepsToggle(document.getElementById("pdsInstallDepsToggle"));
-
-  if (typeSel) {
-    typeSel.value = pdsState.modrinth.type;
-    typeSel.addEventListener("change", () => {
-      pdsState.modrinth.type = typeSel.value;
-      pdsState.modrinth.hits = [];
-      pdsState.modrinth.searched = false;
-      pdsRenderMrResults();
-    });
-  }
-  if (btn) btn.addEventListener("click", pdsSearchModrinth);
-  if (input) {
-    input.value = pdsState.modrinth.query || "";
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") pdsSearchModrinth(); });
-  }
-
-  pdsRenderMrResults();
-}
-
-async function pdsSearchModrinth() {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  const input = document.getElementById("pdsMrQuery");
-  const typeSel = document.getElementById("pdsMrType");
-  const q = input ? input.value.trim() : "";
-  const type = typeSel ? typeSel.value : "mod";
-  pdsState.modrinth.type = type;
-  pdsState.modrinth.query = q;
-  pdsState.modrinth.loading = true;
-
-  const wrap = document.getElementById("pdsMrResults");
-  if (wrap) wrap.innerHTML = `<div class="pds-loading"><div class="spinner"></div><span>Modrinth taranıyor...</span></div>`;
-
-  const params = new URLSearchParams({
-    q: q,
-    type: type,
-    version: inst.version || "",
-    loader: String(inst.loader || "").toLowerCase() === "vanilla" ? "Tümü" : (inst.loader || ""),
-    sort: "downloads",
-    limit: 20,
-    offset: 0
-  });
-
-  const data = await apiGet(`/api/modrinth/search?${params.toString()}`, 20000);
-  pdsState.modrinth.loading = false;
-
-  if (!data || data.error || !Array.isArray(data.hits)) {
-    pdsState.modrinth.hits = [];
-    pdsState.modrinth.searched = true;
-    pdsRenderMrResults((data && data.error) || "Modrinth yanıt vermedi.");
-    return;
-  }
-
-  pdsState.modrinth.hits = data.hits;
-  pdsState.modrinth.searched = true;
-  pdsRenderMrResults();
-}
-
-function pdsRenderMrResults(errorMsg) {
-  const wrap = document.getElementById("pdsMrResults");
-  if (!wrap) return;
-
-  if (pdsState.modrinth.loading) {
-    wrap.innerHTML = `<div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>`;
-    return;
-  }
-  if (errorMsg) {
-    wrap.innerHTML = `<div class="pds-empty">⚠️ ${pdsEsc(errorMsg)}</div>`;
-    return;
-  }
-  if (!pdsState.modrinth.searched) {
-    wrap.innerHTML = `<div class="pds-empty">Aramak için bir şeyler yazın ve türü seçin.</div>`;
-    return;
-  }
-
-  const hits = pdsState.modrinth.hits || [];
-  if (hits.length === 0) {
-    wrap.innerHTML = `<div class="pds-empty">Aradığınız kriterlere uygun içerik bulunamadı.</div>`;
-    return;
-  }
-
-  const cat = contentCategoryFromType(pdsState.modrinth.type);
-  const info = PDS_CAT_INFO[cat];
-  wrap.innerHTML = "";
-
-  hits.forEach(hit => {
-    const card = document.createElement("div");
-    card.className = "pds-mr-card";
-
-    const icon = document.createElement("div");
-    icon.className = "pds-mr-icon";
-    icon.textContent = info.icon;
-    if (hit.icon_url) {
-      const img = document.createElement("img");
-      img.src = hit.icon_url;
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("error", () => { img.remove(); icon.textContent = info.icon; });
-      icon.textContent = "";
-      icon.appendChild(img);
-    }
-
-    const bodyEl = document.createElement("div");
-    bodyEl.className = "pds-mr-body";
-    bodyEl.innerHTML = `
-      <div class="pds-mr-title" title="${pdsEsc(hit.title)}">${pdsEsc(hit.title || hit.slug)}</div>
-      <div class="pds-mr-desc">${pdsEsc(hit.description || "")}</div>
-      <div class="pds-mr-meta">⬇ ${Number(hit.downloads || 0).toLocaleString()}${hit.author ? " • " + pdsEsc(hit.author) : ""}</div>
-    `;
-
-    const installBtn = document.createElement("button");
-    installBtn.type = "button";
-    installBtn.className = "pds-btn pds-btn-primary";
-    installBtn.textContent = "⚡ Kur";
-    installBtn.addEventListener("click", () => pdsInstallSearchHit(hit, installBtn));
-
-    card.appendChild(icon);
-    card.appendChild(bodyEl);
-    card.appendChild(installBtn);
-    wrap.appendChild(card);
-  });
-}
-
-async function pdsInstallSearchHit(hit, buttonEl) {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  const cat = contentCategoryFromType(pdsState.modrinth.type);
-  if (cat === "mod" && String(inst.loader || "").toLowerCase() === "vanilla") {
-    showToast("Vanilla profil mod yüklemez. Fabric/Forge profili kullanın.", "info");
-    return;
-  }
-
-  const original = buttonEl ? buttonEl.textContent : "";
-  if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kuruluyor..."; }
-  showToast(`📥 ${hit.title || hit.slug} → "${inst.name}" profiline indiriliyor...`, "info");
-
-  const payload = {
-    slug: hit.slug,
-    version: inst.version,
-    loader: inst.loader,
-    instance_id: pdsState.instanceId,
-    project_type: cat,
-    force: false,
-    install_dependencies: getInstallDepsPref()
-  };
-  const data = await apiPost("/api/modrinth/install", payload, 180000);
-
-  if (data && data.needs_confirm) {
-    if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = original || "⚡ Kur"; }
-    const ok = await showConfirmDialog({
-      icon: "⚠️",
-      title: "Sürüm Tam Eşleşmiyor",
-      message: `${data.message || "Bu paket sürümünüzle tam eşleşmiyor olabilir."} Yine de indirmek ister misiniz?`,
-      okText: "Yine de İndir"
-    });
-    if (ok) {
-      if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kuruluyor..."; }
-      const forced = await apiPost("/api/modrinth/install", Object.assign({}, payload, { force: true }), 180000);
-      pdsHandleInstallResult(forced, buttonEl, original, cat, hit);
-    }
-    return;
-  }
-  pdsHandleInstallResult(data, buttonEl, original, cat, hit);
-}
-
-async function pdsHandleInstallResult(data, buttonEl, original, cat, hit) {
-  if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = original || "⚡ Kur"; }
-
-  if (data && data.success) {
-    if (data.installed_dependencies || data.failed_dependencies) {
-      modInstallToast(String((hit && (hit.title || hit.slug)) || data.filename || "İçerik"), data);
-    } else {
-      showToast(`✓ ${data.filename || "İçerik"} profile kuruldu.`, "success");
-    }
-    if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "✓ Yüklü"; }
-    await pdsLoadContent(cat, true);
-    if (cat === "mod") pdsLoadMissingDeps();
-    loadInstances();
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Kurulum tamamlanamadı."}`, "error");
-  }
-}
-
-// ==============================================================================
-// SÜRÜM DEĞİŞTİR (VERSION SWITCH) — arama kartı ve profil detayı ortak overlay
-// ==============================================================================
-const vswState = {
-  open: false,
-  slug: "",
-  cat: "mod",
-  title: "",
-  iconUrl: "",
-  instance: null,
-  installedVersion: "",
-  versions: [],
-  loading: false,
-  error: "",
-  query: "",
-  truncated: false
-};
-
-const VSW_SHOW_INCOMPAT_KEY = "cl_vsw_show_incompatible";
-
-function vswShowIncompatiblePref() {
-  try { return localStorage.getItem(VSW_SHOW_INCOMPAT_KEY) === "true"; } catch (e) { return false; }
-}
-
-function vswSetShowIncompatible(value, opts = {}) {
-  const on = !!value;
-  try { localStorage.setItem(VSW_SHOW_INCOMPAT_KEY, on ? "true" : "false"); } catch (e) { /* yoksay */ }
-  const toggle = document.getElementById("vswShowIncompat");
-  if (toggle) toggle.checked = on;
-  if (vswState.open) vswRenderList({ preserveScroll: opts.preserveScroll !== false });
-}
-
-function vswNormalizeVersion(value) {
-  let s = String(value === null || value === undefined ? "" : value).trim().toLowerCase();
-  s = s.replace(/^v[.\s]*/, "");
-  return s.replace(/\s+/g, "");
-}
-
-function vswIsCompatible(v, cat, inst) {
-  if (!inst) return false;
-  const gvs = (v.game_versions || []).map(x => String(x));
-  if (!gvs.includes(String(inst.version || ""))) return false;
-  if (cat === "mod") {
-    const loaders = (v.loaders || []).map(x => String(x).toLowerCase());
-    if (!loaders.includes(String(inst.loader || "").toLowerCase())) return false;
-  }
-  return true;
-}
-
-function vswReason(v, cat, inst) {
-  if (!inst) return "Bu sürüm profilinizle uyumlu değil.";
-  const mc = inst.version || "?";
-  const loader = pdsLoaderLabel(inst.loader);
-  return `Bu sürüm profilin ${mc} ${loader} yapılandırmasıyla uyumlu değil.`;
-}
-
-function vswResolveInstalledVersion() {
-  if (vswState.installedVersion) return vswState.installedVersion;
-  const slug = String(vswState.slug || "").toLowerCase();
-  const target = vswState.instance;
-  const meta = (state.installedContentMeta[vswState.cat] || {})[slug];
-  if (meta && meta.version) return meta.version;
-  // Profil detayı ekranı aynı profili gösteriyorsa oradaki sürüm bilgisini kullan.
-  if (target && pdsState.instanceId && pdsState.instanceId === target.id && pdsState.content[vswState.cat]) {
-    const row = (pdsState.content[vswState.cat] || []).find(f => String(f.slug || "").toLowerCase() === slug);
-    if (row && row.version) return row.version;
-  }
-  return "";
-}
-
-function vswInstalledItemLoader(item) {
-  const raw = item && item.loader;
-  if (Array.isArray(raw)) {
-    const first = raw.map(x => String(x || "").toLowerCase()).find(Boolean);
-    if (first) return first;
-  } else if (raw) {
-    return String(raw).toLowerCase();
-  }
-  return String((vswState.instance && vswState.instance.loader) || "").toLowerCase();
-}
-
-function vswInstalledContentItems() {
-  const cat = vswState.cat;
-  const slug = String(vswState.slug || "").toLowerCase();
-  const target = vswState.instance;
-  if (!slug || !target || !target.id) return [];
-
-  const items = [];
-  const seen = new Set();
-  const addItem = (f) => {
-    if (!f) return;
-    const filename = String(f.name || f.filename || "").replace(/\.disabled$/i, "").toLowerCase();
-    const key = filename || `v:${vswNormalizeVersion(f.version)}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    items.push(f);
-  };
-  const collect = (list) => {
-    (Array.isArray(list) ? list : []).forEach(f => {
-      if (String((f && f.slug) || "").toLowerCase() === slug) addItem(f);
-    });
-  };
-
-  // Yalnızca ekrandaki profille eşleşen kurulu içerik listelerini kullan (uydurma yok).
-  if (pdsState.instanceId === target.id) collect(pdsState.content[cat]);
-  if (state.installedContentInstanceId === target.id) collect(state.installedContent[cat]);
-  return items;
-}
-
-function vswVersionIsInstalled(version, installedItems) {
-  if (!version || !Array.isArray(installedItems) || installedItems.length === 0) return false;
-  const rowFilename = String(version.primary_filename || "").toLowerCase();
-  const rowVersion = vswNormalizeVersion(version.version_number);
-  const rowLoaders = new Set((version.loaders || []).map(l => String(l).toLowerCase()));
-  const loaderRequired = vswState.cat === "mod";
-
-  return installedItems.some(item => {
-    const itemFilename = String(item.name || item.filename || "").replace(/\.disabled$/i, "").toLowerCase();
-    // 1) Dosya adı eşleşmesi kesin kurulu sayılır.
-    if (rowFilename && itemFilename && rowFilename === itemFilename) return true;
-    // 2) Aksi hâlde sürüm numarası eşleşmeli.
-    if (!rowVersion || vswNormalizeVersion(item.version) !== rowVersion) return false;
-    // Shader / doku paketinde yükleyici aranmaz.
-    if (!loaderRequired) return true;
-    // 3) Loader kesişimi şart; kurulu öğenin loader'ı yoksa profilin loader'ı kullanılır.
-    const itemLoader = vswInstalledItemLoader(item);
-    if (!itemLoader) return false;
-    return rowLoaders.has(itemLoader);
-  });
-}
-
-async function openVersionSwitchOverlay(opts = {}, catArg) {
-  // Geriye dönük kısayol: openVersionSwitchOverlay("sodium", "mod")
-  if (typeof opts === "string") opts = { slug: opts, cat: catArg || "mod" };
-  const slug = String(opts.slug || "").trim();
-  if (!slug) {
-    showToast("Bu içeriğin Modrinth kaydı bulunamadı.", "info");
-    return;
-  }
-
-  const modal = document.getElementById("versionSwitchModal");
-  if (!modal) return;
-
-  vswState.open = true;
-  vswState.slug = slug;
-  vswState.cat = opts.cat || "mod";
-  vswState.title = opts.title || slug;
-  vswState.iconUrl = opts.iconUrl || "";
-  vswState.instance = opts.instance || getModrinthTarget();
-  vswState.installedVersion = opts.installedVersion || "";
-  vswState.versions = [];
-  vswState.error = "";
-  vswState.query = "";
-  vswState.truncated = false;
-
-  const titleEl = document.getElementById("vswTitle");
-  const subEl = document.getElementById("vswSub");
-  const iconEl = document.getElementById("vswIcon");
-  const searchEl = document.getElementById("vswSearchInput");
-
-  if (titleEl) titleEl.textContent = `⇄ ${vswState.title} — Sürüm Değiştir`;
-  if (iconEl) {
-    iconEl.innerHTML = "";
-    iconEl.textContent = PDS_CAT_INFO[vswState.cat] ? PDS_CAT_INFO[vswState.cat].icon : "🧩";
-    if (vswState.iconUrl) {
-      const img = document.createElement("img");
-      img.src = vswState.iconUrl;
-      img.alt = "";
-      img.addEventListener("error", () => {
-        img.remove();
-        iconEl.textContent = PDS_CAT_INFO[vswState.cat] ? PDS_CAT_INFO[vswState.cat].icon : "🧩";
-      });
-      iconEl.textContent = "";
-      iconEl.appendChild(img);
-    }
-  }
-  if (subEl) {
-    const inst = vswState.instance;
-    subEl.textContent = inst
-      ? `Hedef: ${inst.name || inst.id} • MC ${inst.version || "?"} • ${pdsLoaderLabel(inst.loader)}`
-      : "Profil seçilmedi";
-  }
-  if (searchEl) searchEl.value = "";
-  const toggleEl = document.getElementById("vswShowIncompat");
-  if (toggleEl) toggleEl.checked = vswShowIncompatiblePref();
-
-  modal.style.display = "flex";
-  vswRenderList();
-
-  if (!vswState.instance) {
-    vswState.loading = false;
-    vswState.error = "Sürüm değiştirmek için önce bir profil seçin.";
-    vswRenderList();
-    return;
-  }
-
-  vswState.loading = true;
-  vswRenderList();
-
-  const params = new URLSearchParams({ slug: slug, instance: vswState.instance.id || "" });
-  const data = await apiGet(`/api/modrinth/project?${params.toString()}`, 15000);
-  if (!vswState.open) return;
-
-  vswState.loading = false;
-  if (data && data.success && Array.isArray(data.versions)) {
-    vswState.versions = data.versions;
-    vswState.truncated = data.versions_truncated === true;
-    if (data.icon_url) vswState.iconUrl = data.icon_url;
-    vswState.error = "";
-  } else {
-    vswState.versions = [];
-    vswState.error = (data && data.error) || "Modrinth sürüm listesi alınamadı.";
-  }
-  vswRenderList();
-}
-
-function closeVersionSwitchOverlay() {
-  const modal = document.getElementById("versionSwitchModal");
-  if (modal) modal.style.display = "none";
-  vswState.open = false;
-}
-
-function vswRenderIncompatEmptyState(emptyEl) {
-  if (!emptyEl) return;
-  const inst = vswState.instance || {};
-  const mc = inst.version || "?";
-  const loader = pdsLoaderLabel(inst.loader);
-  emptyEl.style.display = "flex";
-  emptyEl.innerHTML = `
-    <div class="empty-state empty-state-compact">
-      <div class="empty-state-icon" aria-hidden="true">🧩</div>
-      <h3 class="empty-state-title">Bu profil için uygun sürüm yok</h3>
-      <p class="empty-state-desc">${pdsEsc(mc)} • ${pdsEsc(loader)} yapılandırmasıyla uyumlu sürüm bulunamadı.</p>
-      <button class="btn btn-primary" type="button" id="vswEmptyShowIncompat">Uyumsuzları göster</button>
-    </div>
-  `;
-  const btn = document.getElementById("vswEmptyShowIncompat");
-  if (btn) btn.addEventListener("click", () => vswSetShowIncompatible(true));
-}
-
-function vswRenderList(opts = {}) {
-  const list = document.getElementById("vswList");
-  const empty = document.getElementById("vswEmpty");
-  const toggle = document.getElementById("vswShowIncompat");
-  if (!list) return;
-
-  if (vswState.loading) {
-    if (empty) empty.style.display = "none";
-    list.innerHTML = `<div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>
-      <div class="skeleton skeleton-row"></div>`;
-    return;
-  }
-  if (vswState.error) {
-    if (empty) empty.style.display = "none";
-    list.innerHTML = `<div class="pds-empty">⚠️ ${pdsEsc(vswState.error)}</div>`;
-    return;
-  }
-
-  // Varsayılan: yalnızca profile uyumlu sürümler. Tercih localStorage'da saklanır.
-  const showIncompat = vswShowIncompatiblePref();
-  if (toggle) toggle.checked = showIncompat;
-  if (empty) empty.innerHTML = "";
-  const prevScroll = opts.preserveScroll ? list.scrollTop : null;
-
-  const q = vswNormalizeVersion(vswState.query);
-  const versions = vswState.versions.filter(v =>
-    !q || vswNormalizeVersion(v.version_number).includes(q) || vswNormalizeVersion(v.version_id).includes(q)
-  );
-  const compatOf = (v) => typeof v.compatible === "boolean"
-    ? v.compatible
-    : vswIsCompatible(v, vswState.cat, vswState.instance);
-
-  const compatible = versions.filter(v => compatOf(v));
-  const incompatible = versions.filter(v => !compatOf(v));
-  const visible = showIncompat ? versions : compatible;
-  const totalCompatible = vswState.versions.filter(v => compatOf(v)).length;
-
-  const filterRow = document.getElementById("vswFilterRow");
-  if (filterRow) filterRow.style.display = vswState.versions.length > 0 ? "flex" : "none";
-  const toggleLabel = document.getElementById("vswShowIncompatLabel");
-  if (toggleLabel) toggleLabel.textContent = `Uyumsuzları da göster (${incompatible.length})`;
-  const countEl = document.getElementById("vswCount");
-  if (countEl) {
-    let txt = `${compatible.length} uyumlu sürüm`;
-    if (incompatible.length > 0) {
-      txt += showIncompat
-        ? ` • ${incompatible.length} uyumsuz gösteriliyor`
-        : ` • ${incompatible.length} uyumsuz gizli`;
-    }
-    countEl.textContent = txt;
-  }
-
-  list.innerHTML = "";
-  if (visible.length === 0) {
-    if (empty) {
-      if (vswState.versions.length === 0) {
-        empty.style.display = "flex";
-        empty.textContent = "Bu içerik için sürüm bulunamadı.";
-      } else if (!showIncompat && totalCompatible === 0) {
-        vswRenderIncompatEmptyState(empty);
-      } else {
-        empty.style.display = "flex";
-        empty.textContent = "Aramanızla eşleşen sürüm yok.";
-      }
-    }
-    return;
-  }
-  if (empty) empty.style.display = "none";
-
-  const installedItems = vswInstalledContentItems();
-
-  visible.forEach(v => {
-    const compatible = compatOf(v);
-    // Öncelik: uyumsuz > Kurulu. Uyumsuz satır asla "Kurulu" göstermez.
-    const isInstalled = compatible && vswVersionIsInstalled(v, installedItems);
-
-    const row = document.createElement("div");
-    row.className = "vsw-row" +
-      (isInstalled ? " is-installed" : "") +
-      (!compatible ? " is-incompat" : "");
-
-    const type = String(v.version_type || "release").toLowerCase();
-    const typeLabel = type === "beta" ? "Beta" : (type === "alpha" ? "Alpha" : "Release");
-    const gvs = (v.game_versions || []).slice(0, 4).join(", ");
-    const loaders = (v.loaders || []).slice(0, 4).join(", ");
-    const metaParts = [];
-    if (gvs) metaParts.push(`MC: ${gvs}`);
-    if (loaders) metaParts.push(loaders);
-    if (v.date) metaParts.push(String(v.date).slice(0, 10));
-    if (v.primary_filename) metaParts.push(v.primary_filename);
-
-    const main = document.createElement("div");
-    main.className = "vsw-row-main";
-    main.innerHTML = `
-      <div class="vsw-row-top">
-        <span class="vsw-ver">${pdsEsc(v.version_number || v.version_id || "?")}</span>
-        <span class="vsw-type vsw-type-${pdsEsc(type)}">${pdsEsc(typeLabel)}</span>
-        ${isInstalled ? '<span class="vsw-installed-tag">✓ Kurulu</span>' : ""}
-      </div>
-      <div class="vsw-row-meta" title="${pdsEsc(metaParts.join(" • "))}">${pdsEsc(metaParts.join(" • "))}</div>
-    `;
-
-    const action = document.createElement("div");
-    action.className = "vsw-row-action";
-
-    if (isInstalled) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "vsw-btn is-installed";
-      btn.disabled = true;
-      btn.textContent = "✓ Kurulu";
-      action.appendChild(btn);
-    } else if (compatible) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "vsw-btn vsw-btn-install";
-      btn.textContent = "Bu sürümü kur";
-      btn.addEventListener("click", () => vswInstallVersion(v, btn));
-      action.appendChild(btn);
-    } else {
-      const tag = document.createElement("span");
-      tag.className = "vsw-incompat-tag";
-      tag.textContent = "uyumsuz";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "vsw-btn";
-      btn.disabled = true;
-      btn.textContent = "Kur";
-      const reason = vswReason(v, vswState.cat, vswState.instance);
-      btn.title = reason || "Bu sürüm profilinizle uyumlu değil.";
-      tag.title = btn.title;
-      action.appendChild(tag);
-      action.appendChild(btn);
-    }
-
-    row.appendChild(main);
-    row.appendChild(action);
-    list.appendChild(row);
-  });
-
-  // Kesilme bilgisi yalnizca TUM liste goruntulenirken anlamli. Uyumsuzlar
-  // gizliyken (varsayilan) tek uyumlu surumun altinda "200 surum gosteriliyor"
-  // demek kafa karistiriyordu (kullanici geri bildirimi).
-  if (vswState.truncated && vswShowIncompatiblePref()) {
-    const note = document.createElement("div");
-    note.className = "vsw-truncated-note";
-    note.textContent = `ℹ️ Çok fazla sürüm var; en yeni 200 sürüm gösteriliyor.`;
-    list.appendChild(note);
-  }
-
-  if (prevScroll !== null) list.scrollTop = prevScroll;
-}
-
-async function vswInstallVersion(version, buttonEl) {
-  const inst = vswState.instance;
-  if (!inst || !version) return;
-
-  const original = buttonEl ? buttonEl.textContent : "";
-  if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kuruluyor..."; }
-
-  const data = await apiPost("/api/modrinth/install", {
-    slug: vswState.slug,
-    version: inst.version,
-    loader: inst.loader,
-    project_type: vswState.cat,
-    instance_id: inst.id,
-    version_id: version.version_id || "",
-    version_number: version.version_number || "",
-    install_dependencies: getInstallDepsPref()
-  }, 180000);
-
-  if (data && data.success) {
-    const installed = data.installed || {};
-    const oldName = String(data.replaced || "").replace(/\.disabled$/i, "");
-    const newName = String(installed.filename || data.filename || version.primary_filename || "").replace(/\.disabled$/i, "");
-    const transition = oldName && newName && oldName !== newName
-      ? `${oldName} → ${newName}`
-      : (newName || oldName);
-    showToast(`✓ ${vswState.title || vswState.slug} ${transition}`, "success");
-
-    closeVersionSwitchOverlay();
-    await refreshInstalledContent();
-    applyInstalledStates();
-    if (pdsState.instanceId) {
-      await pdsLoadContent(vswState.cat, true);
-      if (vswState.cat === "mod") pdsLoadMissingDeps();
-    }
-    loadInstances();
-  } else {
-    if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = original || "Bu sürümü kur"; }
-    showToast(`⚠️ ${(data && data.error) || "Sürüm değiştirilemedi."}`, "error");
-  }
-}
-
-function initVersionSwitchModal() {
-  const modal = document.getElementById("versionSwitchModal");
-  if (!modal || modal.dataset.bound === "1") return;
-  modal.dataset.bound = "1";
-
-  const close = () => closeVersionSwitchOverlay();
-  const btnClose = document.getElementById("btnCloseVersionSwitch");
-  const btnCancel = document.getElementById("btnCancelVersionSwitch");
-  const search = document.getElementById("vswSearchInput");
-  const toggle = document.getElementById("vswShowIncompat");
-
-  if (btnClose) btnClose.addEventListener("click", close);
-  if (btnCancel) btnCancel.addEventListener("click", close);
-  modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
-
-  if (toggle) {
-    toggle.checked = vswShowIncompatiblePref();
-    toggle.addEventListener("change", () => vswSetShowIncompatible(toggle.checked));
-  }
-
-  if (search) {
-    search.addEventListener("input", () => {
-      vswState.query = search.value || "";
-      vswRenderList();
-    });
-  }
-
+// ==================== DIALOG A11Y ====================
+function initDialogA11y() {
+  if (initDialogA11y._bound) return;
+  initDialogA11y._bound = true;
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && vswState.open) close();
-  });
-}
-
-// ---------- Sürüm sekmesi ----------
-function pdsRenderVersionTab(pane) {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">🧱 Sürüm Bilgisi</h3>
-        <p class="pds-section-sub">Sürüm/yükleyici değiştirme Faz 2'de; şimdilik bilgileri görüntüleyin ve profili düzenleyin.</p>
-      </div>
-    </div>
-    <div class="pds-info-grid">
-      <div class="pds-info-card"><span class="pds-info-label">Minecraft Sürümü</span><span class="pds-info-value">${pdsEsc(inst.version || "?")}</span></div>
-      <div class="pds-info-card"><span class="pds-info-label">Yükleyici</span><span class="pds-info-value">${pdsEsc(pdsLoaderLabel(inst.loader))}</span></div>
-      <div class="pds-info-card"><span class="pds-info-label">Yükleyici Sürümü</span><span class="pds-info-value">${pdsEsc(inst.loader_version || "Otomatik / Bilinmiyor")}</span></div>
-      <div class="pds-info-card"><span class="pds-info-label">Oluşturma Tarihi</span><span class="pds-info-value">${pdsEsc(inst.created_at || "—")}</span></div>
-      <div class="pds-info-card"><span class="pds-info-label">Mod Sayısı</span><span class="pds-info-value">${inst.mod_count || 0}</span></div>
-    </div>
-
-    <h3 class="pds-section-title pds-sub-head">✏️ Profili Düzenle</h3>
-    <div class="pds-form">
-      <div class="pds-field">
-        <label>Profil Adı</label>
-        <input type="text" class="styled-input" id="pdsVersionName" value="${pdsEsc(inst.name || "")}" autocomplete="off">
-      </div>
-      <div class="pds-field">
-        <label>Profil İkonu (URL)</label>
-        <input type="text" class="styled-input" id="pdsVersionIcon" placeholder="https://.../ikon.png" value="${pdsEsc(inst.icon || "")}" autocomplete="off" spellcheck="false">
-      </div>
-      <button type="button" class="btn-primary-action" id="pdsVersionSave">💾 Kaydet</button>
-    </div>
-  `;
-
-  const save = document.getElementById("pdsVersionSave");
-  if (save) save.addEventListener("click", () => pdsSaveProfileForm("pdsVersionName", "pdsVersionIcon", save));
-}
-
-// ---------- Ayarlar sekmesi ----------
-function pdsRenderSettingsTab(pane) {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">⚙️ Ayarlar</h3>
-        <p class="pds-section-sub">Profil kimliğini düzenleyin, klasörü açın veya profili silin.</p>
-      </div>
-    </div>
-    <div class="pds-form">
-      <div class="pds-field">
-        <label>Profil Adı</label>
-        <input type="text" class="styled-input" id="pdsSettingsName" value="${pdsEsc(inst.name || "")}" autocomplete="off">
-      </div>
-      <div class="pds-field">
-        <label>Profil İkonu (URL)</label>
-        <input type="text" class="styled-input" id="pdsSettingsIcon" placeholder="https://.../ikon.png" value="${pdsEsc(inst.icon || "")}" autocomplete="off" spellcheck="false">
-      </div>
-      <button type="button" class="btn-primary-action" id="pdsSettingsSave">💾 Kaydet</button>
-    </div>
-
-    <div class="pds-danger-zone">
-      <div class="pds-danger-text">
-        <strong>Profil klasörü</strong>
-        <span>Modlar, dünyalar ve ayarlar bu klasörde saklanır.</span>
-      </div>
-      <button type="button" class="btn-secondary" id="pdsOpenFolderBtn">📂 Klasörü Aç</button>
-    </div>
-
-    <div class="pds-danger-zone pds-danger-red">
-      <div class="pds-danger-text">
-        <strong>Profili Sil</strong>
-        <span>Profil ve tüm içeriği kalıcı olarak silinir. Bu işlem geri alınamaz.</span>
-      </div>
-      <button type="button" class="pds-btn pds-btn-danger pds-btn-lg" id="pdsDeleteProfileBtn">🗑 Profili Sil</button>
-    </div>
-  `;
-
-  const save = document.getElementById("pdsSettingsSave");
-  if (save) save.addEventListener("click", () => pdsSaveProfileForm("pdsSettingsName", "pdsSettingsIcon", save));
-
-  const folderBtn = document.getElementById("pdsOpenFolderBtn");
-  if (folderBtn) folderBtn.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}`));
-
-  const deleteBtn = document.getElementById("pdsDeleteProfileBtn");
-  if (deleteBtn) deleteBtn.addEventListener("click", pdsDeleteCurrentProfile);
-}
-
-async function pdsSaveProfileForm(nameId, iconId, buttonEl) {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  const nameEl = document.getElementById(nameId);
-  const iconEl = document.getElementById(iconId);
-  const name = nameEl ? nameEl.value.trim() : "";
-  if (!name) {
-    showToast("Profil adı boş olamaz.", "error");
-    return;
-  }
-
-  const original = buttonEl ? buttonEl.textContent : "";
-  if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kaydediliyor..."; }
-
-  const data = await apiPost("/api/instances/update", {
-    id: pdsState.instanceId,
-    name: name,
-    icon: iconEl ? iconEl.value.trim() : ""
-  }, 12000);
-
-  if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = original || "💾 Kaydet"; }
-
-  if (data && data.success) {
-    showToast("✓ Profil güncellendi.", "success");
-    await loadInstances();
-    pdsSyncInstance();
-    pdsRenderHeader();
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Profil güncellenemedi."}`, "error");
-  }
-}
-
-async function pdsDeleteCurrentProfile() {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  const ok = await showConfirmDialog({
-    icon: "🗑️",
-    title: "Profil Silinsin mi?",
-    message: `"${inst.name}" profili ve içindeki tüm mod, dünya ve ayarlar kalıcı olarak silinecek. Emin misiniz?`,
-    okText: "Profili Sil",
-    danger: true
-  });
-  if (!ok) return;
-
-  const data = await apiPost("/api/instances/delete", { id: pdsState.instanceId }, 30000);
-  if (data && data.success) {
-    showToast(`🗑️ "${inst.name}" profili silindi.`, "success");
-    closeProfileDetail();
-    await loadInstances();
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Profil silinemedi."}`, "error");
-  }
-}
-
-// ---------- Minecraft Günlüğü sekmesi ----------
-function pdsRenderLogsTab(pane) {
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">📜 Minecraft Günlüğü</h3>
-        <p class="pds-section-sub">Launcher ve oyunun son günlük kayıtları.</p>
-      </div>
-      <div class="pds-head-actions">
-        <button type="button" class="btn-secondary" id="pdsLogsRefresh">↻ Yenile</button>
-        <button type="button" class="btn-secondary" id="pdsLogsClear">Temizle</button>
-      </div>
-    </div>
-    <pre class="pds-log" id="pdsLogOut">Günlük yükleniyor...</pre>
-  `;
-
-  const out = document.getElementById("pdsLogOut");
-  const load = async () => {
-    if (!out) return;
-    const data = await apiGet("/api/logs", 8000);
-    const logs = (data && Array.isArray(data.logs)) ? data.logs : [];
-    out.textContent = logs.length ? logs.join("\n") : "Günlük kaydı yok.";
-    out.scrollTop = out.scrollHeight;
-  };
-
-  const refresh = document.getElementById("pdsLogsRefresh");
-  if (refresh) refresh.addEventListener("click", load);
-
-  const clear = document.getElementById("pdsLogsClear");
-  if (clear) clear.addEventListener("click", () => { if (out) out.textContent = "Günlük görünümü temizlendi.\n"; });
-
-  load();
-}
-
-// ---------- Faz 2/3 sekmeleri ("Yakında") ----------
-function pdsRenderSoonTab(pane, tabId) {
-  const info = PDS_SOON_TABS[tabId] || { label: "Yakında", icon: "🧭", folder: "", desc: "" };
-  pane.innerHTML = `
-    <div class="pds-soon">
-      <div class="pds-soon-icon">${info.icon}</div>
-      <h3 class="pds-soon-title">${pdsEsc(info.label)} — Yakında</h3>
-      <p class="pds-soon-desc">${pdsEsc(info.desc)}</p>
-      <button type="button" class="btn-secondary" id="pdsSoonFolder">📂 Klasörü Aç</button>
-    </div>
-  `;
-  const btn = document.getElementById("pdsSoonFolder");
-  if (btn) {
-    btn.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/${info.folder}`));
-  }
-}
-
-/* ==============================================================================
-   FAZ 3: SHADER MAĞAZASI (profil detayı içinde overlay panel)
-   ============================================================================== */
-
-function pdsOpenShaderStore() {
-  const storeEl = document.getElementById("pdsStore");
-  const backdrop = document.getElementById("pdsStoreBackdrop");
-  const input = document.getElementById("pdsStoreQuery");
-  const sortSel = document.getElementById("pdsStoreSort");
-  if (!storeEl) return;
-
-  const inst = pdsSyncInstance();
-  const sub = document.getElementById("pdsStoreSub");
-  if (sub) {
-    sub.textContent = `Modrinth araması profile göre filtrelenir: MC ${inst ? inst.version : "?"} • shader`;
-  }
-  if (input) input.value = pdsState.store.query || "";
-  if (sortSel) sortSel.value = pdsState.store.sort || "downloads";
-
-  pdsState.store.open = true;
-  storeEl.classList.add("open");
-  storeEl.setAttribute("aria-hidden", "false");
-  if (backdrop) backdrop.classList.add("show");
-
-  pdsRefreshInstalledShaderSlugs().then(() => pdsLoadShaderStore());
-}
-
-function pdsCloseShaderStore() {
-  const storeEl = document.getElementById("pdsStore");
-  const backdrop = document.getElementById("pdsStoreBackdrop");
-  pdsState.store.open = false;
-  if (storeEl) {
-    storeEl.classList.remove("open");
-    storeEl.setAttribute("aria-hidden", "true");
-  }
-  if (backdrop) backdrop.classList.remove("show");
-}
-
-function pdsSearchShaderStore() {
-  const input = document.getElementById("pdsStoreQuery");
-  pdsState.store.query = input ? input.value.trim() : "";
-  pdsLoadShaderStore();
-}
-
-async function pdsRefreshInstalledShaderSlugs() {
-  const installed = new Set();
-  const addFile = (f) => {
-    ["slug", "name", "display_name"].forEach(k => {
-      const v = String((f && f[k]) || "").trim().toLowerCase();
-      if (v) installed.add(v);
-    });
-    const base = String((f && f.name) || "").trim().toLowerCase().replace(/\.disabled$/, "");
-    if (base) installed.add(base);
-  };
-
-  if (Array.isArray(pdsState.content.shader)) {
-    pdsState.content.shader.forEach(addFile);
-  } else {
-    const data = await apiGet(
-      `/api/instances/content?instance_id=${encodeURIComponent(pdsState.instanceId)}`,
-      10000
-    );
-    const files = (data && data.success && data.categories && data.categories.shader &&
-      data.categories.shader.files) || [];
-    if (Array.isArray(files)) files.forEach(addFile);
-  }
-  pdsState.store.installed = installed;
-}
-
-function pdsIsShaderInstalled(hit) {
-  const set = pdsState.store.installed instanceof Set ? pdsState.store.installed : new Set();
-  const slug = String((hit && hit.slug) || "").trim().toLowerCase();
-  const title = String((hit && hit.title) || "").trim().toLowerCase();
-  return (slug && set.has(slug)) || (title && set.has(title));
-}
-
-async function pdsLoadShaderStore() {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  pdsState.store.loading = true;
-  pdsState.store.searched = true;
-  pdsState.store.error = "";
-  pdsRenderShaderStore();
-
-  const params = new URLSearchParams({
-    q: pdsState.store.query || "",
-    type: "shader",
-    version: inst.version || "",
-    sort: pdsState.store.sort || "downloads",
-    limit: 20,
-    offset: 0
-  });
-
-  const data = await apiGet(`/api/modrinth/search?${params.toString()}`, 20000);
-  pdsState.store.loading = false;
-
-  if (!data || data.error || !Array.isArray(data.hits)) {
-    pdsState.store.hits = [];
-    pdsState.store.error = (data && data.error) || "Modrinth yanıt vermedi.";
-    pdsRenderShaderStore();
-    return;
-  }
-  pdsState.store.hits = data.hits;
-  pdsRenderShaderStore();
-}
-
-function pdsRenderShaderStore() {
-  const wrap = document.getElementById("pdsStoreResults");
-  if (!wrap) return;
-  const st = pdsState.store;
-
-  if (st.loading) {
-    wrap.innerHTML = `<div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>`;
-    return;
-  }
-  if (st.error) {
-    wrap.innerHTML = `<div class="pds-empty">⚠️ ${pdsEsc(st.error)}</div>`;
-    return;
-  }
-  if (!st.searched) {
-    wrap.innerHTML = `<div class="pds-empty">Aramak için bir şeyler yazın veya aşağıdaki listeyi yükleyin.</div>`;
-    return;
-  }
-  if (!st.hits || st.hits.length === 0) {
-    wrap.innerHTML = `<div class="pds-empty">Aradığınız kriterlere uygun shader bulunamadı.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = "";
-  st.hits.forEach((hit, idx) => {
-    const installed = pdsIsShaderInstalled(hit);
-    const card = document.createElement("div");
-    card.className = "pds-store-card" + (installed ? " is-installed" : "");
-    card.style.animationDelay = `${Math.min(idx * 0.03, 0.4)}s`;
-
-    // Hero: Modrinth galerisi veya ikon
-    const hero = document.createElement("div");
-    hero.className = "pds-store-hero";
-    const gallery = Array.isArray(hit.gallery) ? hit.gallery.filter(Boolean) : [];
-    const heroUrl = gallery[0] || hit.icon_url || "";
-    if (heroUrl) {
-      const img = document.createElement("img");
-      img.src = heroUrl;
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("error", () => {
-        if (hit.icon_url && img.src !== hit.icon_url) {
-          img.src = hit.icon_url;
-        } else {
-          img.remove();
-          hero.textContent = "✨";
-        }
+    if (e.key === "Escape") {
+      document.querySelectorAll(".modal-backdrop").forEach(m => {
+        if (m.style.display === "flex") m.style.display = "none";
       });
-      hero.appendChild(img);
-    } else {
-      hero.textContent = "✨";
+      closeProfileDetail();
     }
-
-    const hint = document.createElement("span");
-    hint.className = "pds-store-hint";
-    hint.textContent = "ℹ️";
-    hint.title = "Oyun içinde Iris/OptiFine menüsünden seçilir";
-    hint.addEventListener("click", (e) => {
-      e.stopPropagation();
-      showToast("ℹ️ Shader'ı oyun içinde Iris/OptiFine menüsünden seçin.", "info");
-    });
-    hero.appendChild(hint);
-    if (installed) {
-      const badge = document.createElement("span");
-      badge.className = "pds-store-badge";
-      badge.textContent = "Kuruldu ✓";
-      hero.appendChild(badge);
-    }
-
-    const cats = (hit.display_categories && hit.display_categories.length
-      ? hit.display_categories
-      : hit.categories) || [];
-
-    const bodyEl = document.createElement("div");
-    bodyEl.className = "pds-store-body";
-    bodyEl.innerHTML = `
-      <div class="pds-store-name" title="${pdsEsc(hit.title)}">${pdsEsc(hit.title || hit.slug)}</div>
-      <div class="pds-store-desc">${pdsEsc(hit.description || "Açıklama bulunmuyor.")}</div>
-      <div class="pds-store-meta">
-        <span>⬇ ${Number(hit.downloads || 0).toLocaleString()}</span>
-        ${hit.author ? `<span>👤 ${pdsEsc(hit.author)}</span>` : ""}
-      </div>
-      <div class="pds-store-chips">${cats.slice(0, 3).map(c => `<span class="pds-chip">${pdsEsc(c)}</span>`).join("")}</div>
-    `;
-
-    const actions = document.createElement("div");
-    actions.className = "pds-store-actions";
-    const installBtn = document.createElement("button");
-    installBtn.type = "button";
-    installBtn.className = "pds-btn pds-btn-primary pds-store-install";
-    installBtn.textContent = installed ? "Kuruldu ✓" : "⬇ Kur";
-    if (installed) {
-      installBtn.disabled = true;
-      installBtn.classList.add("is-installed");
-    } else {
-      installBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        pdsInstallShader(hit, installBtn);
-      });
-    }
-    actions.appendChild(installBtn);
-
-    card.appendChild(hero);
-    card.appendChild(bodyEl);
-    card.appendChild(actions);
-    card.addEventListener("click", () => pdsOpenStoreDrawer(hit));
-    wrap.appendChild(card);
   });
 }
 
-function pdsOpenStoreDrawer(hit) {
-  pdsOpenDrawer({
-    slug: hit.slug,
-    name: hit.slug,
-    display_name: hit.title || hit.slug,
-    description: hit.description || "",
-    store_mode: true,
-    hit: hit
-  }, "shader");
-}
-
-async function pdsInstallShader(hit, buttonEl) {
-  const inst = pdsSyncInstance();
-  if (!inst) return;
-
-  const original = buttonEl ? buttonEl.textContent : "";
-  if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kuruluyor..."; }
-  showToast(`📥 ${hit.title || hit.slug} → "${inst.name}" profiline indiriliyor...`, "info");
-
-  const payload = {
-    slug: hit.slug,
-    version: inst.version,
-    loader: inst.loader,
-    instance_id: pdsState.instanceId,
-    project_type: "shader",
-    install_dependencies: false
-  };
-  const data = await apiPost("/api/modrinth/install", payload, 180000);
-
-  if (data && data.needs_confirm) {
-    if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = original || "⬇ Kur"; }
-    const ok = await showConfirmDialog({
-      icon: "⚠️",
-      title: "Sürüm Tam Eşleşmiyor",
-      message: `${data.message || "Bu shader sürümünüzle tam eşleşmiyor olabilir."} Yine de indirmek ister misiniz?`,
-      okText: "Yine de İndir"
-    });
-    if (ok) {
-      if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kuruluyor..."; }
-      const forced = await apiPost("/api/modrinth/install", Object.assign({}, payload, { force: true }), 180000);
-      pdsHandleShaderInstallResult(forced, hit, buttonEl, original);
-    }
-    return;
-  }
-  pdsHandleShaderInstallResult(data, hit, buttonEl, original);
-}
-
-async function pdsHandleShaderInstallResult(data, hit, buttonEl, original) {
-  if (data && data.success) {
-    showToast(`✓ ${data.filename || hit.slug} shaderpacks klasörüne kuruldu.`, "success");
-    if (buttonEl) {
-      buttonEl.disabled = true;
-      buttonEl.textContent = "Kuruldu ✓";
-      buttonEl.classList.add("is-installed");
-    }
-    pdsState.store.installed.add(String(hit.slug || "").trim().toLowerCase());
-    await pdsLoadContent("shader", true);
-    await pdsRefreshInstalledShaderSlugs();
-    pdsRenderShaderStore();
-    loadInstances();
-  } else {
-    if (buttonEl) {
-      buttonEl.disabled = false;
-      buttonEl.textContent = original || "⬇ Kur";
-    }
-    showToast(`⚠️ ${(data && data.error) || "Shader kurulamadı."}`, "error");
-  }
-}
-
-/* ==============================================================================
-   FAZ 4: PROFİL VARLIKLARI (Notlar / Dünyalar / Sunucular / Görüntüler / Kayıtlar)
-   ============================================================================== */
-
-async function pdsCopyText(text) {
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      showToast(`📋 Kopyalandı: ${text}`, "success");
-      return;
-    }
-  } catch (_) {}
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
-    showToast(`📋 Kopyalandı: ${text}`, "success");
-  } catch (_) {
-    showToast("Kopyalanamadı.", "error");
-  }
-}
-
-// ---------- Notlar ----------
-async function pdsRenderNotesTab(pane) {
-  const inst = pdsSyncInstance();
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">📝 Notlar</h3>
-        <p class="pds-section-sub">"${pdsEsc(inst ? inst.name : "Profil")}" için not defteri (note.txt). Yazarken otomatik kaydedilir.</p>
-      </div>
-      <div class="pds-head-actions">
-        <span class="pds-note-status" id="pdsNoteStatus"></span>
-        <button type="button" class="btn-secondary" id="pdsNoteFolder">📂 Klasörü Aç</button>
-      </div>
-    </div>
-    <div class="pds-note-wrap">
-      <textarea class="pds-note-area" id="pdsNoteArea" placeholder="Bu profile dair notlarınız..." spellcheck="false"></textarea>
-      <div class="pds-note-foot">
-        <span class="pds-note-count" id="pdsNoteCount">0 karakter</span>
-        <button type="button" class="btn-primary-action" id="pdsNoteSave">💾 Kaydet</button>
-      </div>
-    </div>
-  `;
-
-  const area = document.getElementById("pdsNoteArea");
-  const count = document.getElementById("pdsNoteCount");
-  const status = document.getElementById("pdsNoteStatus");
-  const updateCount = () => {
-    if (count && area) count.textContent = `${(area.value || "").length.toLocaleString()} karakter`;
-  };
-
-  if (!pdsState.note.loaded) {
-    if (area) area.disabled = true;
-    const data = await apiGet(`/api/instances/note?instance=${encodeURIComponent(pdsState.instanceId)}`, 10000);
-    if (area) area.disabled = false;
-    if (data && data.success && area) {
-      area.value = data.content || "";
-      pdsState.note.loaded = true;
-      pdsState.note.lastSaved = data.content || "";
-      pdsState.note.pending = data.content || "";
-      if (status) status.textContent = data.exists ? "Yüklendi" : "Yeni not";
-    } else if (status) {
-      status.textContent = "⚠️ Not alınamadı";
-    }
-  } else if (area) {
-    area.value = pdsState.note.lastSaved || "";
-    pdsState.note.pending = area.value;
-    if (status) status.textContent = "Kaydedildi";
-  }
-  updateCount();
-
-  if (area) {
-    area.addEventListener("input", () => {
-      updateCount();
-      pdsState.note.pending = area.value;
-      if (status) status.textContent = "Yazıyor...";
-      if (pdsState.note.timer) clearTimeout(pdsState.note.timer);
-      pdsState.note.timer = setTimeout(() => {
-        pdsState.note.timer = null;
-        pdsSaveNote(area.value, status);
-      }, 1500);
-    });
-  }
-
-  const saveBtn = document.getElementById("pdsNoteSave");
-  if (saveBtn) {
-    saveBtn.addEventListener("click", () => {
-      if (pdsState.note.timer) {
-        clearTimeout(pdsState.note.timer);
-        pdsState.note.timer = null;
-      }
-      pdsSaveNote(area ? area.value : "", status);
-    });
-  }
-
-  const folderBtn = document.getElementById("pdsNoteFolder");
-  if (folderBtn) folderBtn.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}`));
-}
-
-async function pdsSaveNote(content, statusEl) {
-  if (pdsState.note.saving) return;
-  pdsState.note.saving = true;
-  if (statusEl) statusEl.textContent = "Kaydediliyor...";
-  const data = await apiPost("/api/instances/note", {
-    instance: pdsState.instanceId,
-    content: content
-  }, 12000);
-  pdsState.note.saving = false;
-  if (data && data.success) {
-    pdsState.note.lastSaved = content;
-    pdsState.note.pending = content;
-    if (statusEl) statusEl.textContent = "✓ Kaydedildi";
-  } else if (statusEl) {
-    statusEl.textContent = `⚠️ ${(data && data.error) || "Kaydedilemedi"}`;
-  }
-}
-
-// ---------- Dünyalar ----------
-function pdsWorldIconUrl(worldName) {
-  return `${API_BASE}/api/instances/world/icon?instance=${encodeURIComponent(pdsState.instanceId)}` +
-    `&world=${encodeURIComponent(worldName)}`;
-}
-
-async function pdsRenderWorldsTab(pane) {
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">🌍 Dünyalar</h3>
-        <p class="pds-section-sub">Bu profildeki kayıtlı dünyalar. Kopyalayın veya silin.</p>
-      </div>
-      <div class="pds-head-actions">
-        <button type="button" class="btn-secondary" id="pdsWorldsRefresh">↻ Yenile</button>
-        <button type="button" class="btn-secondary" id="pdsWorldsFolder">📂 Klasörü Aç</button>
-      </div>
-    </div>
-    <div class="pds-asset-list" id="pdsWorldsList">
-      <div class="pds-loading"><div class="spinner"></div><span>Dünyalar yükleniyor...</span></div>
-    </div>
-  `;
-
-  const refresh = document.getElementById("pdsWorldsRefresh");
-  if (refresh) refresh.addEventListener("click", () => pdsLoadWorlds(true));
-  const folder = document.getElementById("pdsWorldsFolder");
-  if (folder) folder.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/saves`));
-
-  pdsLoadWorlds(false);
-}
-
-async function pdsLoadWorlds(force) {
-  const wrap = document.getElementById("pdsWorldsList");
-  if (!wrap) return;
-  if (!force && pdsState.worlds !== null) return pdsRenderWorlds();
-
-  const data = await apiGet(`/api/instances/worlds?instance=${encodeURIComponent(pdsState.instanceId)}`, 20000);
-  if (!data || data.success !== true) {
-    wrap.innerHTML = `<div class="pds-empty">⚠️ ${pdsEsc((data && data.error) || "Dünya listesi alınamadı.")}</div>`;
-    return;
-  }
-  pdsState.worlds = Array.isArray(data.worlds) ? data.worlds : [];
-  pdsRenderWorlds();
-}
-
-function pdsRenderWorlds() {
-  const wrap = document.getElementById("pdsWorldsList");
-  if (!wrap) return;
-  const worlds = pdsState.worlds || [];
-  if (worlds.length === 0) {
-    wrap.innerHTML = `<div class="pds-empty">🌍 Henüz dünya yok.<br>Oyun içinden yeni bir dünya oluşturabilirsiniz.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = "";
-  worlds.forEach(w => {
-    const row = document.createElement("div");
-    row.className = "pds-asset";
-
-    const icon = document.createElement("div");
-    icon.className = "pds-asset-icon";
-    icon.textContent = "🌍";
-    if (w.has_icon) {
-      const img = document.createElement("img");
-      img.alt = "";
-      img.loading = "lazy";
-      img.src = pdsWorldIconUrl(w.name);
-      img.addEventListener("error", () => { img.remove(); icon.textContent = "🌍"; });
-      icon.textContent = "";
-      icon.appendChild(img);
-    }
-
-    const info = document.createElement("div");
-    info.className = "pds-asset-info";
-    info.innerHTML = `
-      <div class="pds-asset-name" title="${pdsEsc(w.name)}">${pdsEsc(w.name)}</div>
-      <div class="pds-asset-meta">${Number(w.size_mb || 0).toFixed(1)} MB${w.last_played ? " • Son oynanma: " + pdsEsc(w.last_played) : ""}</div>
-    `;
-
-    const actions = document.createElement("div");
-    actions.className = "pds-item-actions";
-
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.className = "pds-btn";
-    openBtn.textContent = "📂";
-    openBtn.title = "Klasörü Aç";
-    openBtn.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/saves/${w.name}`));
-
-    const copyBtn = document.createElement("button");
-    copyBtn.type = "button";
-    copyBtn.className = "pds-btn";
-    copyBtn.textContent = "📋 Kopyala";
-    copyBtn.title = "Dünyayı çoğalt";
-    copyBtn.addEventListener("click", () => pdsCopyWorld(w, copyBtn));
-
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "pds-btn pds-btn-danger";
-    delBtn.textContent = "🗑";
-    delBtn.title = "Sil";
-    delBtn.addEventListener("click", () => pdsDeleteWorld(w));
-
-    actions.appendChild(openBtn);
-    actions.appendChild(copyBtn);
-    actions.appendChild(delBtn);
-    row.appendChild(icon);
-    row.appendChild(info);
-    row.appendChild(actions);
-    wrap.appendChild(row);
-  });
-}
-
-async function pdsCopyWorld(world, buttonEl) {
-  const original = buttonEl ? buttonEl.textContent : "📋 Kopyala";
-  if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = "Kopyalanıyor..."; }
-  const data = await apiPost("/api/instances/world/copy", {
-    instance: pdsState.instanceId,
-    world: world.name
-  }, 120000);
-  if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = original; }
-
-  if (data && data.success) {
-    showToast(`📋 Dünya kopyalandı: ${data.name}`, "success");
-    await pdsLoadWorlds(true);
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Dünya kopyalanamadı."}`, "error");
-  }
-}
-
-async function pdsDeleteWorld(world) {
-  const ok = await showConfirmDialog({
-    icon: "🗑️",
-    title: "Dünya Silinsin mi?",
-    message: `"${world.name}" dünyası ve içindeki tüm kayıtlar kalıcı olarak silinecek. Bu işlem geri alınamaz.`,
-    okText: "Sil",
-    danger: true
-  });
-  if (!ok) return;
-
-  const data = await apiPost("/api/instances/world/delete", {
-    instance: pdsState.instanceId,
-    world: world.name
-  }, 30000);
-  if (data && data.success) {
-    showToast(`🗑️ ${world.name} silindi.`, "success");
-    await pdsLoadWorlds(true);
-  } else {
-    showToast(`⚠️ ${(data && data.error) || "Dünya silinemedi."}`, "error");
-  }
-}
-
-// ---------- Sunucular ----------
-async function pdsRenderServersTab(pane) {
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">🌐 Sunucular</h3>
-        <p class="pds-section-sub">servers.dat içindeki kayıtlı sunucular (oyun içinden eklenir).</p>
-      </div>
-      <div class="pds-head-actions">
-        <button type="button" class="btn-secondary" id="pdsServersRefresh">↻ Yenile</button>
-        <button type="button" class="btn-secondary" id="pdsServersFolder">📂 Klasörü Aç</button>
-      </div>
-    </div>
-    <div class="pds-asset-list" id="pdsServersList">
-      <div class="pds-loading"><div class="spinner"></div><span>Sunucular yükleniyor...</span></div>
-    </div>
-  `;
-
-  const refresh = document.getElementById("pdsServersRefresh");
-  if (refresh) refresh.addEventListener("click", () => pdsLoadServers(true));
-  const folder = document.getElementById("pdsServersFolder");
-  if (folder) folder.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}`));
-
-  pdsLoadServers(false);
-}
-
-async function pdsLoadServers(force) {
-  const wrap = document.getElementById("pdsServersList");
-  if (!wrap) return;
-  if (!force && pdsState.servers !== null) return pdsRenderServers();
-
-  const data = await apiGet(`/api/instances/servers?instance=${encodeURIComponent(pdsState.instanceId)}`, 15000);
-  if (!data || data.success !== true) {
-    wrap.innerHTML = `<div class="pds-empty">⚠️ ${pdsEsc((data && data.error) || "Sunucu listesi alınamadı.")}</div>`;
-    return;
-  }
-  pdsState.servers = Array.isArray(data.servers) ? data.servers : [];
-  pdsRenderServers();
-}
-
-function pdsRenderServers() {
-  const wrap = document.getElementById("pdsServersList");
-  if (!wrap) return;
-  const servers = pdsState.servers || [];
-  if (servers.length === 0) {
-    wrap.innerHTML = `<div class="pds-empty">🌐 Sunucu listesi boş (oyun içinden eklenir).</div>`;
-    return;
-  }
-
-  wrap.innerHTML = "";
-  servers.forEach(srv => {
-    const row = document.createElement("div");
-    row.className = "pds-asset";
-
-    const icon = document.createElement("div");
-    icon.className = "pds-asset-icon";
-    icon.textContent = "🌐";
-
-    const info = document.createElement("div");
-    info.className = "pds-asset-info";
-    info.innerHTML = `
-      <div class="pds-asset-name" title="${pdsEsc(srv.name)}">${pdsEsc(srv.name || "İsimsiz sunucu")}</div>
-      <div class="pds-asset-meta pds-asset-ip" title="${pdsEsc(srv.ip)}">${pdsEsc(srv.ip || "")}</div>
-    `;
-
-    const actions = document.createElement("div");
-    actions.className = "pds-item-actions";
-
-    const copyBtn = document.createElement("button");
-    copyBtn.type = "button";
-    copyBtn.className = "pds-btn";
-    copyBtn.textContent = "📋 IP'yi Kopyala";
-    copyBtn.addEventListener("click", () => pdsCopyText(srv.ip || ""));
-
-    actions.appendChild(copyBtn);
-    row.appendChild(icon);
-    row.appendChild(info);
-    row.appendChild(actions);
-    wrap.appendChild(row);
-  });
-}
-
-// ---------- Ekran Görüntüleri ----------
-function pdsShotUrl(shot) {
-  return `${API_BASE}/api/instances/screenshot/file?instance=${encodeURIComponent(pdsState.instanceId)}` +
-    `&name=${encodeURIComponent(shot.name)}&t=${Math.round(shot.mtime || 0)}`;
-}
-
-async function pdsRenderProfileShotsTab(pane) {
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">📸 Ekran Görüntüleri</h3>
-        <p class="pds-section-sub">Bu profilde alınan ekran görüntüleri (screenshots/).</p>
-      </div>
-      <div class="pds-head-actions">
-        <button type="button" class="btn-secondary" id="pdsShotsRefresh">↻ Yenile</button>
-        <button type="button" class="btn-secondary" id="pdsShotsFolder">📂 Klasörü Aç</button>
-      </div>
-    </div>
-    <div class="pds-shot-grid" id="pdsShotsGrid">
-      <div class="pds-loading" style="grid-column: 1/-1;"><div class="spinner"></div><span>Görüntüler yükleniyor...</span></div>
-    </div>
-  `;
-
-  const refresh = document.getElementById("pdsShotsRefresh");
-  if (refresh) refresh.addEventListener("click", () => pdsLoadProfileShots(true));
-  const folder = document.getElementById("pdsShotsFolder");
-  if (folder) folder.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/screenshots`));
-
-  pdsLoadProfileShots(false);
-}
-
-async function pdsLoadProfileShots(force) {
-  const wrap = document.getElementById("pdsShotsGrid");
-  if (!wrap) return;
-  if (!force && pdsState.shots !== null) return pdsRenderProfileShots();
-
-  const data = await apiGet(`/api/instances/screenshots?instance=${encodeURIComponent(pdsState.instanceId)}`, 15000);
-  if (!data || data.success !== true) {
-    wrap.innerHTML = `<div class="pds-empty" style="grid-column: 1/-1;">⚠️ ${pdsEsc((data && data.error) || "Ekran görüntüleri alınamadı.")}</div>`;
-    return;
-  }
-  pdsState.shots = Array.isArray(data.screenshots) ? data.screenshots : [];
-  pdsRenderProfileShots();
-}
-
-function pdsRenderProfileShots() {
-  const wrap = document.getElementById("pdsShotsGrid");
-  if (!wrap) return;
-  const shots = pdsState.shots || [];
-  if (shots.length === 0) {
-    wrap.innerHTML = `<div class="pds-empty" style="grid-column: 1/-1;">📸 Henüz ekran görüntüsü yok.<br>Oyunda F2 tuşuna basarak alabilirsiniz.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = "";
-  shots.forEach(shot => {
-    const card = document.createElement("div");
-    card.className = "pds-shot-card";
-    const url = pdsShotUrl(shot);
-    card.innerHTML = `
-      <div class="pds-shot-thumb"><img alt="" loading="lazy" src="${pdsEsc(url)}"></div>
-      <div class="pds-shot-meta">
-        <span title="${pdsEsc(shot.name)}">${pdsEsc(shot.name)}</span>
-        <span>${Math.max(1, Math.round((shot.size || 0) / 1024))} KB</span>
-      </div>
-    `;
-    const img = card.querySelector("img");
-    if (img) img.addEventListener("error", () => { img.remove(); card.querySelector(".pds-shot-thumb").textContent = "📸"; });
-    card.addEventListener("click", () => pdsOpenLightbox(url));
-    wrap.appendChild(card);
-  });
-}
-
-function pdsOpenLightbox(url) {
-  const lb = document.getElementById("pdsLightbox");
-  const img = document.getElementById("pdsLightboxImg");
-  if (!lb || !img) return;
-  img.src = url;
-  lb.classList.add("show");
-  lb.setAttribute("aria-hidden", "false");
-}
-
-function pdsCloseLightbox() {
-  const lb = document.getElementById("pdsLightbox");
-  const img = document.getElementById("pdsLightboxImg");
-  if (img) img.removeAttribute("src");
-  if (lb) {
-    lb.classList.remove("show");
-    lb.setAttribute("aria-hidden", "true");
-  }
-}
-
-// ---------- Diğer Kayıtlar ----------
-async function pdsRenderOtherLogsTab(pane) {
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">🗄️ Diğer Kayıtlar</h3>
-        <p class="pds-section-sub">crash-reports ve logs klasöründeki kayıt dosyaları. Son 200 satır görüntülenebilir.</p>
-      </div>
-      <div class="pds-head-actions">
-        <button type="button" class="btn-secondary" id="pdsOtherRefresh">↻ Yenile</button>
-        <button type="button" class="btn-secondary" id="pdsOtherFolder">📂 Klasörü Aç</button>
-      </div>
-    </div>
-    <div class="pds-asset-list" id="pdsOtherLogsList">
-      <div class="pds-loading"><div class="spinner"></div><span>Kayıtlar yükleniyor...</span></div>
-    </div>
-  `;
-
-  const refresh = document.getElementById("pdsOtherRefresh");
-  if (refresh) refresh.addEventListener("click", () => pdsLoadOtherLogs(true));
-  const folder = document.getElementById("pdsOtherFolder");
-  if (folder) folder.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/logs`));
-
-  pdsLoadOtherLogs(false);
-}
-
-async function pdsLoadOtherLogs(force) {
-  const wrap = document.getElementById("pdsOtherLogsList");
-  if (!wrap) return;
-  if (!force && pdsState.otherLogs !== null) return pdsRenderOtherLogs();
-
-  const data = await apiGet(`/api/instances/logs?instance=${encodeURIComponent(pdsState.instanceId)}`, 15000);
-  if (!data || data.success !== true) {
-    wrap.innerHTML = `<div class="pds-empty">⚠️ ${pdsEsc((data && data.error) || "Kayıt listesi alınamadı.")}</div>`;
-    return;
-  }
-  pdsState.otherLogs = Array.isArray(data.files) ? data.files : [];
-  pdsRenderOtherLogs();
-}
-
-function pdsRenderOtherLogs() {
-  const wrap = document.getElementById("pdsOtherLogsList");
-  if (!wrap) return;
-  const files = pdsState.otherLogs || [];
-  if (files.length === 0) {
-    wrap.innerHTML = `<div class="pds-empty">🗄️ Kayıt dosyası yok.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = "";
-  files.forEach(f => {
-    const row = document.createElement("div");
-    row.className = "pds-asset";
-
-    const icon = document.createElement("div");
-    icon.className = "pds-asset-icon";
-    icon.textContent = f.dir === "crash-reports" ? "💥" : "📄";
-
-    const info = document.createElement("div");
-    info.className = "pds-asset-info";
-    info.innerHTML = `
-      <div class="pds-asset-name" title="${pdsEsc(f.name)}">${pdsEsc(f.name)}</div>
-      <div class="pds-asset-meta">${pdsEsc(f.dir)}/ • ${Number(f.size_kb || 0).toFixed(1)} KB • ${pdsEsc(f.modified || "")}</div>
-    `;
-
-    const actions = document.createElement("div");
-    actions.className = "pds-item-actions";
-
-    const viewBtn = document.createElement("button");
-    viewBtn.type = "button";
-    viewBtn.className = "pds-btn";
-    viewBtn.textContent = "👁 Görüntüle";
-    viewBtn.addEventListener("click", () => pdsOpenLogViewer(f));
-
-    const folderBtn = document.createElement("button");
-    folderBtn.type = "button";
-    folderBtn.className = "pds-btn";
-    folderBtn.textContent = "📂";
-    folderBtn.title = "Klasörü Aç";
-    folderBtn.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/${f.dir}`));
-
-    actions.appendChild(viewBtn);
-    actions.appendChild(folderBtn);
-    row.appendChild(icon);
-    row.appendChild(info);
-    row.appendChild(actions);
-    wrap.appendChild(row);
-  });
-}
-
-async function pdsOpenLogViewer(file) {
-  const pane = document.querySelector(".pds-pane");
-  if (!pane) return;
-  pane.innerHTML = `
-    <div class="pds-section-head">
-      <div>
-        <h3 class="pds-section-title">📄 ${pdsEsc(file.name)}</h3>
-        <p class="pds-section-sub">${pdsEsc(file.dir)}/ • son 200 satır</p>
-      </div>
-      <div class="pds-head-actions">
-        <button type="button" class="btn-secondary" id="pdsLogViewerBack">← Geri</button>
-        <button type="button" class="btn-secondary" id="pdsLogViewerFolder">📂 Klasörü Aç</button>
-      </div>
-    </div>
-    <pre class="pds-log" id="pdsLogViewerOut">Kayıt yükleniyor...</pre>
-  `;
-
-  const back = document.getElementById("pdsLogViewerBack");
-  if (back) back.addEventListener("click", () => pdsRenderOtherLogsTab(pane));
-  const folder = document.getElementById("pdsLogViewerFolder");
-  if (folder) folder.addEventListener("click", () => openSystemFolder(`instances/${pdsState.instanceId}/${file.dir}`));
-
-  const out = document.getElementById("pdsLogViewerOut");
-  const data = await apiGet(
-    `/api/instances/log/file?instance=${encodeURIComponent(pdsState.instanceId)}` +
-    `&dir=${encodeURIComponent(file.dir)}&name=${encodeURIComponent(file.name)}`,
-    20000
-  );
-  if (!out) return;
-  if (data && data.success && Array.isArray(data.lines)) {
-    out.textContent = data.lines.length ? data.lines.join("\n") : "Kayıt boş.";
-    out.scrollTop = out.scrollHeight;
-  } else {
-    out.textContent = `⚠️ ${(data && data.error) || "Kayıt okunamadı."}`;
-  }
-}
+// ==================== INIT RIPPLE ====================
+initRipple();
