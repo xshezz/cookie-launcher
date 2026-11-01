@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CookieLauncher - Hesap & Topluluk</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0a0a0f; color: #f3f4f6; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .logo { font-size: 24px; font-weight: 800; color: #ff9b2b; }
+    .nav { display: flex; gap: 16px; }
+    .nav a { color: #9ca3af; text-decoration: none; font-weight: 600; }
+    .nav a:hover { color: #fff; }
+    .card { background: #181824; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 24px; margin: 16px 0; }
+    .btn { background: #ff9b2b; border: none; color: #fff; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    .btn:hover { background: #ffad4a; }
+    .btn-discord { background: #5865F2; }
+    .btn-discord:hover { background: #4752C4; }
+    .form-group { margin: 12px 0; }
+    .form-group label { display: block; margin-bottom: 4px; font-size: 13px; color: #9ca3af; }
+    .form-group input { width: 100%; padding: 10px; background: rgba(10,10,15,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; color: #fff; }
+    .rank-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+    .rank-coal { background: #4a4a4a; }
+    .rank-iron { background: #b0b0b0; color: #000; }
+    .rank-gold { background: #ffd700; color: #000; }
+    .rank-diamond { background: #00bfff; color: #000; }
+    .rank-netherite { background: #4a3a2a; }
+    .leaderboard { list-style: none; }
+    .leaderboard li { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .friend-code { font-family: monospace; font-size: 18px; color: #ff9b2b; background: rgba(255,155,43,0.1); padding: 8px 16px; border-radius: 8px; display: inline-block; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">CookieLauncher</div>
+      <nav class="nav">
+        <a href="#login">Giriş</a>
+        <a href="#account">Hesap</a>
+        <a href="#friends">Arkadaşlar</a>
+        <a href="#leaderboard">Liderlik</a>
+      </nav>
+    </header>
+
+    <!-- Giriş Bölümü -->
+    <section id="login" class="card">
+      <h2>Oturum Aç / Kayıt Ol</h2>
+      <div id="loginForm">
+        <div class="form-group">
+          <label>Kullanıcı Adı veya E-posta</label>
+          <input type="text" id="loginUsername" placeholder="Kullanıcı adınız...">
+        </div>
+        <div class="form-group">
+          <label>Şifre</label>
+          <input type="password" id="loginPassword" placeholder="Şifreniz...">
+        </div>
+        <button class="btn" onclick="doLogin()">Giriş Yap</button>
+        <button class="btn btn-discord" onclick="doDiscordLogin()">Discord ile Giriş</button>
+      </div>
+      <div id="registerForm" class="hidden">
+        <div class="form-group">
+          <label>Kullanıcı Adı</label>
+          <input type="text" id="regUsername" placeholder="Kullanıcı adınız...">
+        </div>
+        <div class="form-group">
+          <label>E-posta</label>
+          <input type="email" id="regEmail" placeholder="E-posta adresiniz...">
+        </div>
+        <div class="form-group">
+          <label>Şifre</label>
+          <input type="password" id="regPassword" placeholder="Şifreniz...">
+        </div>
+        <button class="btn" onclick="doRegister()">Kayıt Ol</button>
+        <button class="btn btn-discord" onclick="doDiscordRegister()">Discord ile Kayıt</button>
+      </div>
+      <button class="btn" style="margin-top:12px;background:transparent;border:1px solid rgba(255,255,255,0.2);" onclick="toggleForm()">Form Değiştir</button>
+    </section>
+
+    <!-- Hesap Bilgileri -->
+    <section id="account" class="card hidden">
+      <h2>Hesap Bilgileri</h2>
+      <div id="accountInfo"></div>
+    </section>
+
+    <!-- Arkadaşlar -->
+    <section id="friends" class="card hidden">
+      <h2>Arkadaşlar</h2>
+      <p>Arkadaş Kodunuz: <span class="friend-code" id="myCode">CL-XXXX-XXXX</span></p>
+      <div class="form-group">
+        <label>Arkadaş Ekle</label>
+        <input type="text" id="friendCodeInput" placeholder="Arkadaş kodu girin...">
+        <button class="btn" onclick="addFriend()">Ekle</button>
+      </div>
+      <div id="friendsList"></div>
+    </section>
+
+    <!-- Liderlik Tablosu -->
+    <section id="leaderboard" class="card">
+      <h2>Liderlik Tablosu</h2>
+      <ul class="leaderboard" id="leaderboardList"></ul>
+    </section>
+  </div>
+
+  <script>
+    const API = "https://api.cookielauncher.com"; // Backend API URL
+    
+    let currentUser = null;
+    let users = JSON.parse(localStorage.getItem("cl_users") || "[]");
+    
+    function generateFriendCode() {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let code = "CL-";
+      for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+      code += "-";
+      for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+      return code;
+    }
+    
+    function getRank(points) {
+      if (points >= 9000) return { name: "Netherite", icon: "🔥", class: "rank-netherite" };
+      if (points >= 6000) return { name: "Elmas", icon: "◆", class: "rank-diamond" };
+      if (points >= 3000) return { name: "Altın", icon: "★", class: "rank-gold" };
+      if (points >= 1000) return { name: "Demir", icon: "🛡", class: "rank-iron" };
+      return { name: "Kömür", icon: "⛏", class: "rank-coal" };
+    }
+    
+    function doLogin() {
+      const username = document.getElementById("loginUsername").value;
+      const password = document.getElementById("loginPassword").value;
+      const user = users.find(u => (u.username === username || u.email === username) && u.password === password);
+      if (user) {
+        currentUser = user;
+        localStorage.setItem("cl_current_user", JSON.stringify(user));
+        showToast("Giriş başarılı: " + user.username);
+        updateUI();
+      } else {
+        showToast("Kullanıcı adı veya şifre hatalı", "error");
+      }
+    }
+    
+    function doRegister() {
+      const username = document.getElementById("regUsername").value;
+      const email = document.getElementById("regEmail").value;
+      const password = document.getElementById("regPassword").value;
+      if (users.find(u => u.username === username)) {
+        showToast("Bu kullanıcı adı zaten kullanılıyor", "error");
+        return;
+      }
+      const newUser = {
+        id: "user_" + Date.now(),
+        username: username,
+        email: email,
+        password: password,
+        points: 0,
+        friendCode: generateFriendCode(),
+        createdAt: new Date().toISOString()
+      };
+      users.push(newUser);
+      localStorage.setItem("cl_users", JSON.stringify(users));
+      currentUser = newUser;
+      localStorage.setItem("cl_current_user", JSON.stringify(newUser));
+      showToast("Kayıt başarılı: " + username);
+      updateUI();
+    }
+    
+    function doDiscordLogin() {
+      const discordUser = {
+        id: "discord_" + Date.now(),
+        username: "DiscordUser" + Math.floor(Math.random() * 1000),
+        email: "discord@example.com",
+        points: 0,
+        friendCode: generateFriendCode(),
+        createdAt: new Date().toISOString(),
+        authType: "discord"
+      };
+      users.push(discordUser);
+      localStorage.setItem("cl_users", JSON.stringify(users));
+      currentUser = discordUser;
+      localStorage.setItem("cl_current_user", JSON.stringify(discordUser));
+      showToast("Discord ile giriş yapıldı: " + discordUser.username);
+      updateUI();
+    }
+    
+    function doDiscordRegister() {
+      doDiscordLogin();
+    }
+    
+    function toggleForm() {
+      document.getElementById("loginForm").classList.toggle("hidden");
+      document.getElementById("registerForm").classList.toggle("hidden");
+    }
+    
+    function updateUI() {
+      if (currentUser) {
+        document.getElementById("login").classList.add("hidden");
+        document.getElementById("account").classList.remove("hidden");
+        document.getElementById("friends").classList.remove("hidden");
+        const rank = getRank(currentUser.points);
+        document.getElementById("accountInfo").innerHTML = `
+          <p><strong>Kullanıcı:</strong> ${currentUser.username}</p>
+          <p><strong>E-posta:</strong> ${currentUser.email || '-'}</p>
+          <p><strong>Arkadaş Kodu:</strong> <span class="friend-code">${currentUser.friendCode}</span></p>
+          <p><strong>Rütbe:</strong> <span class="rank-badge ${rank.class}">${rank.icon} ${rank.name}</span></p>
+          <p><strong>Puan:</strong> ${currentUser.points} / 9000</p>
+        `;
+        document.getElementById("myCode").textContent = currentUser.friendCode;
+      }
+    }
+    
+    function addFriend() {
+      const code = document.getElementById("friendCodeInput").value.toUpperCase();
+      const friend = users.find(u => u.friendCode === code);
+      if (friend) {
+        showToast(friend.username + " arkadaş olarak eklendi!");
+        document.getElementById("friendsList").innerHTML += `<p>${friend.username} - ${getRank(friend.points).icon} ${getRank(friend.points).name}</p>`;
+      } else {
+        showToast("Arkadaş kodu bulunamadı", "error");
+      }
+    }
+    
+    function showToast(message, type = "info") {
+      const toast = document.createElement("div");
+      toast.style.cssText = "position:fixed;bottom:20px;right:20px;padding:12px 20px;border-radius:8px;color:#fff;font-weight:600;z-index:9999;";
+      toast.style.background = type === "error" ? "#f38ba8" : "#a6e3a1";
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+    
+    // Leaderboard render
+    function renderLeaderboard() {
+      const list = document.getElementById("leaderboardList");
+      const sorted = users.sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 10);
+      list.innerHTML = sorted.map((u, i) => {
+        const rank = getRank(u.points || 0);
+        return `<li><span>#${i+1} ${rank.icon} ${u.username}</span><span>${u.points || 0} puan</span></li>`;
+      }).join("");
+    }
+    
+    // Initialize
+    const savedUser = localStorage.getItem("cl_current_user");
+    if (savedUser) {
+      currentUser = JSON.parse(savedUser);
+      updateUI();
+    }
+    renderLeaderboard();
+  </script>
+</body>
+</html>
