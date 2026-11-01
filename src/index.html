@@ -3,109 +3,119 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CookieLauncher v4.0.0 🍪</title>
+  <title>CookieLauncher v4.0.0</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <!-- =================== BAŞLIK ÇUBUĞU (TITLEBAR) =================== -->
   <header class="titlebar" data-tauri-drag-region="deep">
     <div class="titlebar-left" data-tauri-drag-region="deep">
+      <!-- Hızlı Klasörler Menüsü -->
       <div class="quick-dropdown">
         <button class="btn-titlebar-action" id="btnQuickFolders" aria-haspopup="true" aria-expanded="false">
-          <span>📁 Klasörler ▾</span>
+          <span>Klasörler</span>
         </button>
         <div class="dropdown-menu" id="quickFoldersMenu" role="menu">
-          <button class="dropdown-item" role="menuitem" data-folder="">📂 .minecraft Ana Klasörü</button>
-          <button class="dropdown-item" role="menuitem" data-folder="mods">🧩 mods Klasörü</button>
-          <button class="dropdown-item" role="menuitem" data-folder="instances">⚡ instances (Profiller)</button>
-          <button class="dropdown-item" role="menuitem" data-folder="saves">💾 saves (Dünyalar)</button>
-          <button class="dropdown-item" role="menuitem" data-folder="screenshots">📸 screenshots Klasörü</button>
-          <button class="dropdown-item" role="menuitem" data-folder="crash-reports">⚠️ crash-reports Klasörü</button>
+          <button class="dropdown-item" role="menuitem" data-folder="">.minecraft Ana Klasörü</button>
+          <button class="dropdown-item" role="menuitem" data-folder="mods">mods Klasörü</button>
+          <button class="dropdown-item" role="menuitem" data-folder="instances">instances (Profiller)</button>
+          <button class="dropdown-item" role="menuitem" data-folder="saves">saves (Dünyalar)</button>
+          <button class="dropdown-item" role="menuitem" data-folder="screenshots">screenshots Klasörü</button>
+          <button class="dropdown-item" role="menuitem" data-folder="crash-reports">crash-reports Klasörü</button>
         </div>
       </div>
     </div>
 
+    <!-- Sürükleme alanı -->
     <div class="titlebar-drag" data-tauri-drag-region="deep"></div>
 
-    <div class="titlebar-controls">
+    <!-- Sağ üst: Profil + Tema + Pencere kontrolleri -->
+    <div class="titlebar-right">
+      <!-- Profil butonu (sağ üst) -->
+      <div class="profile-dropdown" id="profileDropdown">
+        <button class="profile-btn" id="profileBtn" aria-haspopup="true" aria-expanded="false">
+          <span class="profile-avatar-sm" id="profileAvatarSm">U</span>
+          <span class="profile-name-sm" id="profileNameSm">Oturum Aç</span>
+        </button>
+        <div class="profile-menu" id="profileMenu" role="menu">
+          <div class="profile-menu-header" id="profileMenuHeader">
+            <span>Giriş yapılmamış</span>
+          </div>
+          <button class="profile-menu-item" id="pmLogin" role="menuitem">Oturum Aç / Kayıt Ol</button>
+          <button class="profile-menu-item" id="pmAccountInfo" role="menuitem">Hesap Bilgileri</button>
+          <button class="profile-menu-item" id="pmFriends" role="menuitem">Arkadaşlar</button>
+          <button class="profile-menu-item" id="pmLogout" role="menuitem" style="display:none;">Çıkış Yap</button>
+        </div>
+      </div>
+
       <!-- Tema Seçici -->
       <div class="theme-dropdown">
         <button class="theme-dropdown-btn" id="themeDropdownBtn" aria-haspopup="true" aria-expanded="false">
-          <span class="theme-option-icon">🎨</span>
           <span>Tema</span>
         </button>
         <div class="theme-dropdown-menu" id="themeDropdownMenu" role="menu">
           <button class="theme-option active" role="menuitem" data-theme="default">
-            <span class="theme-option-icon">🍪</span>
+            <span class="theme-option-icon">●</span>
             <span>Varsayılan (Obsidian)</span>
           </button>
           <button class="theme-option" role="menuitem" data-theme="turkish-flag">
-            <span class="theme-option-icon">🇹🇷</span>
+            <span class="theme-option-icon">●</span>
             <span>Türk Bayrağı</span>
           </button>
           <button class="theme-option" role="menuitem" data-theme="ottoman">
-            <span class="theme-option-icon">🕌</span>
+            <span class="theme-option-icon">●</span>
             <span>Osmanlı/Türk Motifleri</span>
           </button>
           <button class="theme-option" role="menuitem" data-theme="newyear">
-            <span class="theme-option-icon">🎄</span>
+            <span class="theme-option-icon">●</span>
             <span>Yılbaşı / Noel</span>
           </button>
           <button class="theme-option" role="menuitem" data-theme="winter">
-            <span class="theme-option-icon">❄️</span>
+            <span class="theme-option-icon">●</span>
             <span>Kış / Kar</span>
           </button>
         </div>
       </div>
-      <button class="control-btn" id="btnWinMinimize" title="Simge Durumuna Küçült" aria-label="Simge durumuna küçült">−</button>
-      <button class="control-btn" id="btnWinMaximize" title="Ekranı Kapla" aria-label="Ekranı kapla">□</button>
-      <button class="control-btn btn-close" id="btnWinClose" title="Kapat" aria-label="Kapat">✕</button>
+
+      <div class="titlebar-controls">
+        <button class="control-btn" id="btnWinMinimize" title="Simge Durumuna Küçült" aria-label="Simge durumuna küçült">−</button>
+        <button class="control-btn" id="btnWinMaximize" title="Ekranı Kapla" aria-label="Ekranı kapla">□</button>
+        <button class="control-btn btn-close" id="btnWinClose" title="Kapat" aria-label="Kapat">✕</button>
+      </div>
     </div>
   </header>
 
-  <!-- =================== ANA DÜZEN: SOL RAIL + İÇERİK =================== -->
+  <!-- =================== ANA DÜZEN =================== -->
   <div class="app-layout">
     <!-- Kalıcı Sol Dikey Rail (Sidebar) -->
     <nav class="rail" id="mainRail" aria-label="Ana gezinme">
-      <!-- Marka -->
       <div class="rail-brand">
-        <img src="cookie-logo.png" alt="" class="rail-logo" onerror="this.style.display='none'">
+        <div class="rail-logo-placeholder">CL</div>
         <div class="rail-brand-text">
           <span class="rail-brand-name">Cookie Launcher</span>
           <span class="rail-version">v4.0.0</span>
         </div>
       </div>
 
-      <!-- Ana Menü -->
       <div class="rail-menu" role="tablist" aria-orientation="vertical" aria-label="Bölümler">
         <button class="nav-tab active" data-tab="tab-play" role="tab" aria-selected="true" aria-current="page" title="Oyna">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="10" y1="12" y2="12"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="15" x2="15.01" y1="13" y2="13"/><line x1="18" x2="18.01" y1="11" y2="11"/><rect width="20" height="12" x="2" y="6" rx="6"/></svg>
-          </span>
+          <span class="nav-icon" aria-hidden="true">▶</span>
           <span class="nav-label">Oyna</span>
         </button>
         <button class="nav-tab" data-tab="tab-instances" role="tab" aria-selected="false" title="Profiller">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
-          </span>
+          <span class="nav-icon" aria-hidden="true">📁</span>
           <span class="nav-label">Profiller</span>
         </button>
-        <button class="nav-tab" data-tab="tab-modrinth" role="tab" aria-selected="false" title="Modlar &amp; Paketler">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
-          </span>
+        <button class="nav-tab" data-tab="tab-modrinth" role="tab" aria-selected="false" title="Modlar & Paketler">
+          <span class="nav-icon" aria-hidden="true">🧩</span>
           <span class="nav-label">Modlar &amp; Paketler</span>
         </button>
         <button class="nav-tab" data-tab="tab-gallery" role="tab" aria-selected="false" title="Galeri">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-          </span>
+          <span class="nav-icon" aria-hidden="true">🖼️</span>
           <span class="nav-label">Galeri</span>
         </button>
         <button class="nav-tab" data-tab="tab-console" role="tab" aria-selected="false" title="Konsol">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
-          </span>
+          <span class="nav-icon" aria-hidden="true">⌨️</span>
           <span class="nav-label">Konsol</span>
         </button>
         <button class="nav-tab" data-tab="tab-friends" role="tab" aria-selected="false" title="Arkadaşlar">
@@ -118,15 +128,7 @@
         </button>
       </div>
 
-      <!-- Alt: Aktif Profil Mini Kartı + Çekirdek Durumu -->
       <div class="rail-bottom">
-        <div class="rail-profile" id="railProfileCard" title="Aktif profil">
-          <div class="rail-profile-icon" id="railProfileIcon">🗂️</div>
-          <div class="rail-profile-text">
-            <span class="rail-profile-name" id="railProfileName">Profil yok</span>
-            <span class="rail-profile-meta" id="railProfileMeta">MC • —</span>
-          </div>
-        </div>
         <div class="connection-status" id="railCoreStatus" data-state="ready">
           <span class="status-indicator" aria-hidden="true"></span>
           <span id="engineStatusText">Core Hazır</span>
@@ -136,13 +138,13 @@
 
     <!-- İçerik Alanı -->
     <main class="main-content">
-      <!-- =================== SEKME 1: OYNA (HERO DÜZENİ) =================== -->
+      <!-- =================== SEKME 1: OYNA =================== -->
       <section class="tab-pane active" id="tab-play">
         <div class="play-layout">
           <div class="play-main">
             <div class="panel hero-panel" id="heroPanel">
               <div class="hero-profile">
-                <div class="hero-avatar" id="heroProfileIcon" aria-hidden="true">🗂️</div>
+                <div class="hero-avatar" id="heroProfileIcon" aria-hidden="true">G</div>
                 <div class="hero-info">
                   <span class="hero-eyebrow">Aktif Profil</span>
                   <h2 class="hero-name" id="heroProfileName">Profil seçilmedi</h2>
@@ -157,7 +159,7 @@
               <div class="hero-switch">
                 <label for="activeInstanceSelect">Profil Değiştir</label>
                 <div class="input-with-icon">
-                  <span class="input-icon">🗂️</span>
+                  <span class="input-icon">📁</span>
                   <select id="activeInstanceSelect" class="styled-select styled-select-lg"></select>
                 </div>
               </div>
@@ -219,7 +221,7 @@
             <h2 class="title-text">Oyun Profilleri (Instances)</h2>
             <p class="subtitle-text">Her profil kendi sürümüne, yükleyicisine ve izole mod klasörüne sahiptir.</p>
           </div>
-          <button class="btn-primary-action" id="btnCreateInstance">➕ Yeni Profil Oluştur</button>
+          <button class="btn-primary-action" id="btnCreateInstance">+ Yeni Profil Oluştur</button>
         </div>
         <div class="instances-grid" id="instancesGridWrap">
           <div class="skeleton skeleton-card"></div>
@@ -238,14 +240,14 @@
             </div>
             <div class="search-box">
               <input type="text" id="modrinthSearchInput" class="styled-input search-input" placeholder="Mod veya paket ara...">
-              <button class="btn-search-go" id="btnDoSearch">🔍</button>
+              <button class="btn-search-go" id="btnDoSearch">Ara</button>
             </div>
           </div>
           <div class="cat-pill-row">
-            <button class="cat-pill active" data-type="mod">🧩 Modlar</button>
-            <button class="cat-pill" data-type="modpack">📦 Mod Paketleri</button>
-            <button class="cat-pill" data-type="shader">✨ Shaderlar</button>
-            <button class="cat-pill" data-type="resourcepack">🎨 Doku Paketleri</button>
+            <button class="cat-pill active" data-type="mod">Modlar</button>
+            <button class="cat-pill" data-type="modpack">Mod Paketleri</button>
+            <button class="cat-pill" data-type="shader">Shaderlar</button>
+            <button class="cat-pill" data-type="resourcepack">Doku Paketleri</button>
           </div>
           <div class="modrinth-filter-bar">
             <div class="m-filter-group">
@@ -265,20 +267,20 @@
               </select>
             </div>
             <div class="m-filter-group">
-              <label class="mod-hide-toggle" title="Profilde zaten yüklü olan içerikleri listeden gizler">
+              <label class="mod-hide-toggle">
                 <input type="checkbox" id="hideInstalledToggle">
-                <span>🚫 İndirilenleri gizle</span>
+                <span>İndirilenleri gizle</span>
               </label>
             </div>
             <div class="m-filter-group">
-              <label class="mod-hide-toggle" title="Seçili modun Modrinth'teki zorunlu bağımlılıklarını da otomatik kurar">
+              <label class="mod-hide-toggle">
                 <input type="checkbox" id="installDepsToggle" class="install-deps-cb">
-                <span>🧷 Gerekli bağımlılıkları da kur</span>
+                <span>Bağımlılıkları da kur</span>
               </label>
             </div>
           </div>
           <div class="modrinth-target-bar">
-            <span class="target-label">📥 Kurulum Hedefi:</span>
+            <span class="target-label">Kurulum Hedefi:</span>
             <select id="modrinthInstanceSelect" class="styled-select"></select>
             <span class="target-hint" id="modrinthTargetHint">İçerikler seçilen profilin klasörüne kurulur.</span>
           </div>
@@ -293,7 +295,7 @@
         </div>
         <div class="installed-panel" id="installedPanel">
           <div class="installed-panel-header">
-            <span class="installed-panel-title">📦 Yüklü İçerikler <span class="installed-profile-name" id="installedPanelProfile">— profil seçilmedi</span></span>
+            <span class="installed-panel-title">Yüklü İçerikler <span class="installed-profile-name" id="installedPanelProfile">— profil seçilmedi</span></span>
             <div class="installed-cat-tabs">
               <button class="installed-cat-tab active" data-cat="mod">Modlar <span id="installedCountMod">0</span></button>
               <button class="installed-cat-tab" data-cat="shader">Shaderlar <span id="installedCountShader">0</span></button>
@@ -316,7 +318,7 @@
             <h2 class="title-text">Ekran Görüntüleri Galerisi</h2>
             <p class="subtitle-text">Oyunda F2 tuşuyla çektiğiniz tüm anlar burada saklanır.</p>
           </div>
-          <button class="btn-secondary" id="btnOpenScreenshotsFolder">📂 Klasörü Aç</button>
+          <button class="btn-secondary" id="btnOpenScreenshotsFolder">Klasörü Aç</button>
         </div>
         <div class="gallery-grid" id="screenshotsGridWrap">
           <div class="skeleton skeleton-card"></div>
@@ -341,7 +343,7 @@
       <section class="tab-pane" id="tab-friends">
         <div class="section-titlebar">
           <div>
-            <h2 class="title-text">Arkadaşlar 👥</h2>
+            <h2 class="title-text">Arkadaşlar</h2>
             <p class="subtitle-text">Arkadaşlarınızı ekleyin, çevrimiçi durumlarını görün ve sohbet edin.</p>
           </div>
         </div>
@@ -350,11 +352,11 @@
             <div class="friend-code-box">
               <h3>Arkadaş Kodunuz</h3>
               <div class="friend-code" id="myFriendCode">CL-XXXX-XXXX</div>
-              <button class="btn-secondary" id="btnCopyFriendCode">📋 Kopyala</button>
+              <button class="btn-secondary" id="btnCopyFriendCode">Kopyala</button>
             </div>
             <div class="add-friend-box">
               <input type="text" id="addFriendInput" class="styled-input" placeholder="Arkadaş kodu girin..." style="padding-left:14px;">
-              <button class="btn-primary-action" id="btnAddFriend">➕ Ekle</button>
+              <button class="btn-primary-action" id="btnAddFriend">Ekle</button>
             </div>
             <div class="friends-list" id="friendsList">
               <div class="loading-state"><div class="spinner"></div>Arkadaşlar yükleniyor...</div>
@@ -365,7 +367,7 @@
               <span id="chatFriendName">Sohbet için bir arkadaş seçin</span>
             </div>
             <div class="chat-messages" id="chatMessages">
-              <div class="chat-welcome">👋 Bir arkadaş seçerek sohbete başlayın!</div>
+              <div class="chat-welcome">Bir arkadaş seçerek sohbete başlayın!</div>
             </div>
             <div class="chat-input-box">
               <input type="text" id="chatInput" class="styled-input" placeholder="Mesajınızı yazın..." style="padding-left:14px;">
@@ -379,7 +381,7 @@
       <section class="tab-pane" id="tab-account">
         <div class="section-titlebar">
           <div>
-            <h2 class="title-text">Hesap Bilgileri 👤</h2>
+            <h2 class="title-text">Hesap Bilgileri</h2>
             <p class="subtitle-text">Profilinizi, puanınızı, rütbenizi ve hesap ayarlarınızı yönetin.</p>
           </div>
         </div>
@@ -391,15 +393,11 @@
               <p>Hesabınızı kullanarak puan kazanın, rütbe atlayın ve arkadaşlarınızla sohbet edin.</p>
               <div class="login-buttons">
                 <button class="btn-login-normal" id="btnNormalLogin">
-                  <span>📧</span> Normal Oturum Aç / Kayıt Ol
+                  <span class="btn-icon">📧</span> Normal Oturum Aç / Kayıt Ol
                 </button>
                 <button class="btn-login-discord" id="btnDiscordLogin">
-                  <span>🎮</span> Discord ile Oturum Aç
+                  <span class="btn-icon">🎮</span> Discord ile Oturum Aç
                 </button>
-              </div>
-              <div class="account-buttons">
-                <button class="btn-secondary" id="btnAccountInfo">📋 Hesap Bilgileri</button>
-                <button class="btn-secondary" id="btnAccountSettings">⚙️ Hesap Ayarları</button>
               </div>
             </div>
           </div>
@@ -407,7 +405,7 @@
           <div class="account-profile" id="accountProfile" style="display:none;">
             <div class="profile-card">
               <div class="profile-header">
-                <div class="profile-avatar" id="profileAvatar">👤</div>
+                <div class="profile-avatar" id="profileAvatar">U</div>
                 <div class="profile-info">
                   <h3 id="profileUsername">Kullanıcı</h3>
                   <span class="profile-email" id="profileEmail">email@example.com</span>
@@ -442,12 +440,12 @@
                 </div>
               </div>
               <div class="account-actions">
-                <button class="btn-secondary" id="btnLogout">🚪 Çıkış Yap</button>
-                <button class="btn-secondary" id="btnRefreshProfile">🔄 Yenile</button>
+                <button class="btn-secondary" id="btnLogout">Çıkış Yap</button>
+                <button class="btn-secondary" id="btnRefreshProfile">Yenile</button>
               </div>
             </div>
             <div class="leaderboard-card">
-              <h3>🏆 Liderlik Tablosu</h3>
+              <h3>Liderlik Tablosu</h3>
               <div class="leaderboard-list" id="leaderboardList">
                 <div class="loading-state"><div class="spinner"></div>Yükleniyor...</div>
               </div>
@@ -462,12 +460,12 @@
   <div class="pds-screen" id="profileDetailScreen" style="display: none;" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Profil Detayı">
     <header class="pds-header">
       <button class="pds-back" id="pdsBackBtn" title="Geri (ESC)" aria-label="Geri">←</button>
-      <div class="pds-head-icon" id="pdsHeadIcon">🗂️</div>
+      <div class="pds-head-icon" id="pdsHeadIcon">G</div>
       <div class="pds-head-info">
         <h2 class="pds-head-name" id="pdsHeadName">Profil</h2>
         <p class="pds-head-meta" id="pdsHeadMeta">MC ? • ? • 0 mod</p>
       </div>
-      <button class="btn-secondary pds-close" id="pdsCloseBtn">✕ Kapat</button>
+      <button class="btn-secondary pds-close" id="pdsCloseBtn">Kapat</button>
     </header>
     <div class="pds-body">
       <aside class="pds-sidebar" role="tablist" aria-label="Profil detay sekmeleri">
@@ -513,9 +511,9 @@
           <option value="downloads" selected>En çok indirilen</option>
           <option value="newest">En yeni</option>
         </select>
-        <button type="button" class="btn-primary-action" id="pdsStoreSearchBtn">🔍 Ara</button>
+        <button type="button" class="btn-primary-action" id="pdsStoreSearchBtn">Ara</button>
       </div>
-      <div class="pds-store-note">ℹ️ Shader'lar <code>shaderpacks/</code> klasörüne kurulur; oyun içinde Iris/OptiFine menüsünden seçilir.</div>
+      <div class="pds-store-note">ℹ️ Shader'lar shaderpacks/ klasörüne kurulur; oyun içinde Iris/OptiFine menüsünden seçilir.</div>
       <div class="pds-store-grid" id="pdsStoreResults"></div>
     </section>
     <div class="pds-lightbox" id="pdsLightbox" aria-hidden="true">
@@ -618,7 +616,7 @@
                 <span class="np-lv-value" id="npLoaderRecommended"><span class="np-lv-spinner" aria-hidden="true"></span> hesaplanıyor...</span>
                 <span class="np-lv-sub" id="npLoaderReason">Sürüm + yükleyici seçildiğinde otomatik atanır</span>
               </div>
-              <button type="button" class="np-adv-toggle" id="npAdvToggle" aria-expanded="false" aria-controls="npAdvPanel">⚙️ Gelişmiş</button>
+              <button type="button" class="np-adv-toggle" id="npAdvToggle" aria-expanded="false" aria-controls="npAdvPanel">Gelişmiş</button>
             </div>
             <div class="np-adv" id="npAdvPanel" hidden>
               <div class="form-group">
@@ -670,13 +668,13 @@
                   <select id="npPackGameVersionSelect" class="styled-select"></select>
                 </label>
               </div>
-              <button type="button" class="btn-primary-action np-pack-install" id="npPackInstallBtn" disabled>📦 Profil Olarak Kur</button>
+              <button type="button" class="btn-primary-action np-pack-install" id="npPackInstallBtn" disabled>Profil Olarak Kur</button>
             </div>
           </div>
         </section>
       </div>
       <div class="modal-bottom">
-        <span class="modal-tip-text" id="npModalTip">💡 Profil oluşturulunca otomatik olarak aktif edilir.</span>
+        <span class="modal-tip-text" id="npModalTip">Profil oluşturulunca otomatik olarak aktif edilir.</span>
         <div class="ci-actions">
           <button class="btn-secondary" id="btnCancelCreateInstance">Vazgeç</button>
           <button class="btn-primary-action" id="btnConfirmCreateInstance">Oluştur ve Aktif Yap</button>
@@ -689,7 +687,7 @@
   <div class="modal-backdrop" id="confirmModal" style="display: none;">
     <div class="modal-window confirm-modal-window" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
       <div class="confirm-modal-inner">
-        <div class="confirm-icon" id="confirmModalIcon">⚠️</div>
+        <div class="confirm-icon" id="confirmModalIcon">!</div>
         <h3 class="confirm-title" id="confirmModalTitle">Emin misiniz?</h3>
         <p class="confirm-message" id="confirmModalMessage"></p>
         <div class="confirm-actions">
@@ -728,7 +726,7 @@
         <div class="vsw-empty" id="vswEmpty" style="display: none;">Yüklenecek sürüm bulunamadı.</div>
       </div>
       <div class="modal-bottom">
-        <span class="modal-tip-text">💡 Yalnızca profilinizle uyumlu sürümler listelenir; uyumsuzları üstteki anahtardan gösterin.</span>
+        <span class="modal-tip-text">Yalnızca profilinizle uyumlu sürümler listelenir; uyumsuzları üstteki anahtardan gösterin.</span>
         <button class="btn-secondary" id="btnCancelVersionSwitch">Kapat</button>
       </div>
     </div>
@@ -754,7 +752,7 @@
           <div class="vfilter-pills" role="group" aria-label="Sürüm tipi filtreleri">
             <label class="vpill vpill-opt" title="Yalnızca Cookie Launcher optimize profil hazır olan sürümler">
               <input type="checkbox" id="cbFilterOptimized" class="version-filter-cb" data-category="optimized">
-              <span>⚡ Optimize</span>
+              <span>Optimize</span>
             </label>
             <label class="vpill">
               <input type="checkbox" id="cbFilterReleases" class="version-filter-cb" data-category="release" checked>
@@ -787,7 +785,7 @@
         <div class="vmodal-count"><span id="versionFilteredCountText">0 sürüm</span></div>
       </div>
       <div class="modal-bottom">
-        <span class="modal-tip-text">💡 Seçmek istediğiniz sürümün kartına tıklamanız yeterlidir.</span>
+        <span class="modal-tip-text">Seçmek istediğiniz sürümün kartına tıklamanız yeterlidir.</span>
         <button class="btn-secondary" id="btnCancelVersionSelectorModal">Kapat</button>
       </div>
     </div>
@@ -809,8 +807,8 @@
         </div>
         <div class="progress-meta-row">
           <span class="progress-percent" id="launchProgressPercent">0%</span>
-          <span class="progress-mb-text" id="launchProgressMbText">⬇ 0.0 MB</span>
-          <span class="progress-engine-tag">⚡ Cookie Launcher Engine</span>
+          <span class="progress-mb-text" id="launchProgressMbText">0.0 MB</span>
+          <span class="progress-engine-tag">Cookie Launcher Engine</span>
         </div>
         <button class="btn-dismiss-progress" id="btnDismissProgressModal">Arka Planda Devam Et</button>
       </div>
@@ -832,7 +830,6 @@
           <button class="login-tab active" data-login-tab="login">Giriş Yap</button>
           <button class="login-tab" data-login-tab="register">Kayıt Ol</button>
         </div>
-        <!-- Giriş Formu -->
         <div class="login-pane active" id="loginPaneLogin">
           <div class="form-group">
             <label for="loginUsername">Kullanıcı Adı veya E-posta</label>
@@ -845,10 +842,9 @@
           <button class="btn-primary-action" id="btnDoLogin" style="width:100%;">Giriş Yap</button>
           <div class="login-divider"><span>veya</span></div>
           <button class="btn-login-discord" id="btnDiscordOAuthLogin" style="width:100%;">
-            <span>🎮</span> Discord ile Oturum Aç
+            <span>Discord ile Oturum Aç</span>
           </button>
         </div>
-        <!-- Kayıt Formu -->
         <div class="login-pane" id="loginPaneRegister">
           <div class="form-group">
             <label for="regUsername">Kullanıcı Adı</label>
@@ -869,7 +865,7 @@
           <button class="btn-primary-action" id="btnDoRegister" style="width:100%;">Kayıt Ol</button>
           <div class="login-divider"><span>veya</span></div>
           <button class="btn-login-discord" id="btnDiscordOAuthRegister" style="width:100%;">
-            <span>🎮</span> Discord ile Kayıt Ol
+            <span>Discord ile Kayıt Ol</span>
           </button>
         </div>
       </div>
@@ -888,22 +884,6 @@
       </div>
       <div class="account-info-body" id="accountInfoBody">
         <p>Giriş yapmış bir hesap bulunmamaktadır.</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- =================== MODAL: ARKADAŞLIK İSTEKLERİ =================== -->
-  <div class="modal-backdrop" id="friendRequestsModal" style="display: none;">
-    <div class="modal-window friend-requests-modal-window" role="dialog" aria-modal="true" aria-labelledby="friendRequestsTitle">
-      <div class="modal-top">
-        <div class="modal-top-title">
-          <span class="m-icon">📬</span>
-          <h3 id="friendRequestsTitle">Arkadaşlık İstekleri</h3>
-        </div>
-        <button class="btn-close-modal" id="btnCloseFriendRequestsModal" aria-label="Kapat">✕</button>
-      </div>
-      <div class="friend-requests-body" id="friendRequestsBody">
-        <div class="loading-state"><div class="spinner"></div>Yükleniyor...</div>
       </div>
     </div>
   </div>

@@ -18,12 +18,12 @@ const state = {
   isLoggedIn: localStorage.getItem("cl_logged_in") === "true",
   currentUser: JSON.parse(localStorage.getItem("cl_current_user") || "null"),
   authToken: localStorage.getItem("cl_auth_token") || null,
-  authType: localStorage.getItem("cl_auth_type") || null, // "normal" or "discord"
+  authType: localStorage.getItem("cl_auth_type") || null,
 
   // Friend System
   friends: JSON.parse(localStorage.getItem("cl_friends") || "[]"),
   friendRequests: JSON.parse(localStorage.getItem("cl_friend_requests") || "[]"),
-  myFriendCode: localStorage.getItem("cl_friend_code") || generateFriendCode(),
+  myFriendCode: localStorage.getItem("cl_friend_code") || null,
   activeChatFriend: null,
   chatMessages: JSON.parse(localStorage.getItem("cl_chat_messages") || "{}"),
 
@@ -86,12 +86,18 @@ const state = {
   lastErrorShown: null
 };
 
+// Generate friend code if not exists
+if (!state.myFriendCode) {
+  state.myFriendCode = generateFriendCode();
+  localStorage.setItem("cl_friend_code", state.myFriendCode);
+}
+
 // ================== RANK SISTEMI ==================
 const RANKS = [
-  { id: "coal", name: "Kömür", icon: "⛏️", minPoints: 0, maxPoints: 1000, color: "#4a4a4a" },
-  { id: "iron", name: "Demir", icon: "🛡️", minPoints: 1000, maxPoints: 3000, color: "#b0b0b0" },
-  { id: "gold", name: "Altın", icon: "⭐", minPoints: 3000, maxPoints: 6000, color: "#ffd700" },
-  { id: "diamond", name: "Elmas", icon: "💎", minPoints: 6000, maxPoints: 9000, color: "#00bfff" },
+  { id: "coal", name: "Kömür", icon: "⛏", minPoints: 0, maxPoints: 1000, color: "#4a4a4a" },
+  { id: "iron", name: "Demir", icon: "🛡", minPoints: 1000, maxPoints: 3000, color: "#b0b0b0" },
+  { id: "gold", name: "Altın", icon: "★", minPoints: 3000, maxPoints: 6000, color: "#ffd700" },
+  { id: "diamond", name: "Elmas", icon: "◆", minPoints: 6000, maxPoints: 9000, color: "#00bfff" },
   { id: "netherite", name: "Netherite", icon: "🔥", minPoints: 9000, maxPoints: 999999, color: "#4a3a2a" }
 ];
 
@@ -256,7 +262,6 @@ function saveUserState() {
 }
 
 function loginNormal(username, password) {
-  // Simulated normal login (in real app, this would call backend API)
   const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
   const user = users.find(u => (u.username === username || u.email === username) && u.password === password);
   if (!user) {
@@ -266,12 +271,12 @@ function loginNormal(username, password) {
   state.currentUser = user;
   state.authToken = "normal_" + Date.now();
   state.authType = "normal";
-  // Initialize points if not present
   if (user.points === undefined) user.points = 0;
   if (user.activeSeconds === undefined) user.activeSeconds = 0;
   state.points = user.points || 0;
   state.totalActiveSeconds = user.activeSeconds || 0;
   state.rank = getRankForPoints(state.points).id;
+  state.myFriendCode = user.friendCode || state.myFriendCode;
   saveUserState();
   return { success: true, user: user };
 }
@@ -311,7 +316,6 @@ function registerNormal(username, email, password) {
 }
 
 function loginDiscord() {
-  // Simulated Discord OAuth (in real app, this would redirect to Discord OAuth)
   const discordUser = {
     id: "discord_" + Date.now(),
     username: "DiscordUser" + Math.floor(Math.random() * 1000),
@@ -325,7 +329,6 @@ function loginDiscord() {
     authType: "discord",
     rank: "coal"
   };
-  // Save to users DB
   const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
   users.push(discordUser);
   localStorage.setItem("cl_users_db", JSON.stringify(users));
@@ -347,7 +350,7 @@ function logout() {
   state.authToken = null;
   state.authType = null;
   saveUserState();
-  updateAccountUI();
+  updateProfileUI();
   showToast("Çıkış yapıldı.", "info");
 }
 
@@ -357,7 +360,6 @@ function addFriend(friendCode) {
     showToast("Arkadaş eklemek için giriş yapmalısınız.", "error");
     return false;
   }
-  // Simulated friend lookup
   const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
   const friend = users.find(u => u.friendCode === friendCode && u.id !== state.currentUser.id);
   if (!friend) {
@@ -368,7 +370,6 @@ function addFriend(friendCode) {
     showToast("Bu kullanıcı zaten arkadaşınız.", "info");
     return false;
   }
-  // Send friend request
   const request = {
     id: "req_" + Date.now(),
     from: state.currentUser.id,
@@ -398,8 +399,7 @@ function acceptFriendRequest(requestId) {
     friendCode: friend.friendCode,
     status: "online",
     rank: friend.rank || "coal",
-    points: friend.points || 0,
-    avatar: friend.avatar || null
+    points: friend.points || 0
   });
   req.status = "accepted";
   saveUserState();
@@ -443,19 +443,18 @@ function renderFriendsList() {
     const rank = getRankForPoints(friend.points || 0);
     card.innerHTML = `
       <div class="friend-status ${friend.status || 'offline'}"></div>
-      <div class="friend-avatar">${friend.avatar ? `<img src="${friend.avatar}" alt="">` : '👤'}</div>
+      <div class="friend-avatar">U</div>
       <div class="friend-info">
         <span class="friend-name">${escapeHtml(friend.username)}</span>
         <span class="friend-rank">${rank.icon} ${rank.name} • ${friend.points || 0} puan</span>
       </div>
       <div class="friend-actions">
         <button class="btn-friend-chat" data-friend-id="${friend.id}" title="Sohbet">💬</button>
-        <button class="btn-friend-remove" data-friend-id="${friend.id}" title="Sil">🗑️</button>
+        <button class="btn-friend-remove" data-friend-id="${friend.id}" title="Sil">🗑</button>
       </div>
     `;
     container.appendChild(card);
   });
-  // Event listeners
   container.querySelectorAll(".btn-friend-chat").forEach(btn => {
     btn.addEventListener("click", () => {
       const fid = btn.getAttribute("data-friend-id");
@@ -489,8 +488,8 @@ function renderFriendRequests() {
         <span class="friend-code">${req.fromFriendCode}</span>
       </div>
       <div class="friend-request-actions">
-        <button class="btn-accept" data-req-id="${req.id}">✓ Kabul</button>
-        <button class="btn-reject" data-req-id="${req.id}">✗ Reddet</button>
+        <button class="btn-accept" data-req-id="${req.id}">Kabul</button>
+        <button class="btn-reject" data-req-id="${req.id}">Reddet</button>
       </div>
     `;
     container.appendChild(card);
@@ -515,7 +514,7 @@ function renderChatMessages() {
   const container = document.getElementById("chatMessages");
   if (!container) return;
   if (!state.activeChatFriend) {
-    container.innerHTML = '<div class="chat-welcome">👋 Bir arkadaş seçerek sohbete başlayın!</div>';
+    container.innerHTML = '<div class="chat-welcome">Bir arkadaş seçerek sohbete başlayın!</div>';
     return;
   }
   const fid = state.activeChatFriend.id;
@@ -597,13 +596,11 @@ function updateRankUI() {
 
 function earnPoints(seconds) {
   if (!state.isLoggedIn) return;
-  // 1 point per minute of active time (simplified)
   const pointsEarned = Math.floor(seconds / 60);
   if (pointsEarned > 0) {
     state.points = Math.min(9000, state.points + pointsEarned);
     state.totalActiveSeconds += seconds;
     state.rank = getRankForPoints(state.points).id;
-    // Update user in DB
     const users = JSON.parse(localStorage.getItem("cl_users_db") || "[]");
     const userIdx = users.findIndex(u => u.id === state.currentUser.id);
     if (userIdx >= 0) {
@@ -652,7 +649,27 @@ function renderLeaderboard() {
   });
 }
 
-// ================== ACCOUNT UI ==================
+// ================== PROFILE UI ==================
+function updateProfileUI() {
+  const avatarSm = document.getElementById("profileAvatarSm");
+  const nameSm = document.getElementById("profileNameSm");
+  const profileMenuHeader = document.getElementById("profileMenuHeader");
+  const pmLogout = document.getElementById("pmLogout");
+
+  if (state.isLoggedIn && state.currentUser) {
+    if (avatarSm) avatarSm.textContent = state.currentUser.username.charAt(0).toUpperCase();
+    if (nameSm) nameSm.textContent = state.currentUser.username;
+    if (profileMenuHeader) profileMenuHeader.innerHTML = `<span>${escapeHtml(state.currentUser.username)}</span><br><small>${state.myFriendCode}</small>`;
+    if (pmLogout) pmLogout.style.display = "block";
+  } else {
+    if (avatarSm) avatarSm.textContent = "U";
+    if (nameSm) nameSm.textContent = "Oturum Aç";
+    if (profileMenuHeader) profileMenuHeader.innerHTML = "<span>Giriş yapılmamış</span>";
+    if (pmLogout) pmLogout.style.display = "none";
+  }
+  updateAccountUI();
+}
+
 function updateAccountUI() {
   const loginPrompt = document.getElementById("accountLoginPrompt");
   const profile = document.getElementById("accountProfile");
@@ -660,13 +677,12 @@ function updateAccountUI() {
   if (state.isLoggedIn && state.currentUser) {
     loginPrompt.style.display = "none";
     profile.style.display = "block";
-    // Update profile info
     const profileUsername = document.getElementById("profileUsername");
     const profileEmail = document.getElementById("profileEmail");
     const profileAvatar = document.getElementById("profileAvatar");
     if (profileUsername) profileUsername.textContent = state.currentUser.username;
     if (profileEmail) profileEmail.textContent = state.currentUser.email || "";
-    if (profileAvatar) profileAvatar.textContent = state.currentUser.avatar || "👤";
+    if (profileAvatar) profileAvatar.textContent = state.currentUser.username.charAt(0).toUpperCase();
     updateRankUI();
   } else {
     loginPrompt.style.display = "block";
@@ -697,19 +713,6 @@ function bindInstallDepsToggle(el) {
   el.addEventListener("change", () => setInstallDepsPref(el.checked));
 }
 
-function modInstallToast(name, data) {
-  const installed = (data && data.installed_dependencies) || [];
-  const failed = (data && data.failed_dependencies) || [];
-  const label = name || (data && data.filename) || "İçerik";
-  if (failed.length > 0) {
-    showToast(`⚠️ ${label} kuruldu ama ${failed.length} bağımlılık kurulamadı`, "error");
-  } else if (installed.length > 0) {
-    showToast(`✓ ${label} kuruldu • ${installed.length} bağımlılık`, "success");
-  } else {
-    showToast(`✓ ${label} kuruldu.`, "success");
-  }
-}
-
 // ================== BAŞLATMA (INIT) ==================
 document.addEventListener("DOMContentLoaded", async () => {
   await detectApiBase();
@@ -720,9 +723,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   startStatusPolling();
   setupTauriWindowControls();
   initProfileDetailScreen();
-  // Start points earning timer
   startPointsTimer();
-  // Update friend code display
   const friendCodeEl = document.getElementById("myFriendCode");
   if (friendCodeEl) friendCodeEl.textContent = state.myFriendCode;
 });
@@ -750,23 +751,13 @@ function initUI() {
   if (ramSlider) ramSlider.value = state.ram;
   updateRamUI();
 
-  // Tema uygula
   applyTheme(state.theme);
-
-  // Hesap UI güncelle
-  updateAccountUI();
-
-  // Arkadaş listesi render
+  updateProfileUI();
   renderFriendsList();
-
-  // Liderlik tablosu render
   renderLeaderboard();
-
-  // Hero + rail aktif profil özeti
   renderPlayHero();
 }
 
-// RAM göstergesi
 function updateRamUI() {
   const ram = state.ram;
   const ramText = document.getElementById("ramValueText");
@@ -796,15 +787,12 @@ function setupEventListeners() {
   const btnQuick = document.getElementById("btnQuickFolders");
   const quickMenu = document.getElementById("quickFoldersMenu");
   if (btnQuick && quickMenu) {
-    const syncQuickAria = () => btnQuick.setAttribute("aria-expanded", quickMenu.classList.contains("show") ? "true" : "false");
     btnQuick.addEventListener("click", (e) => {
       e.stopPropagation();
       quickMenu.classList.toggle("show");
-      syncQuickAria();
     });
     window.addEventListener("click", () => {
       quickMenu.classList.remove("show");
-      syncQuickAria();
     });
   }
 
@@ -812,19 +800,54 @@ function setupEventListeners() {
     item.addEventListener("click", () => openSystemFolder(item.getAttribute("data-folder")));
   });
 
+  // Profil Dropdown
+  const profileBtn = document.getElementById("profileBtn");
+  const profileMenu = document.getElementById("profileMenu");
+  if (profileBtn && profileMenu) {
+    profileBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      profileMenu.classList.toggle("show");
+    });
+    window.addEventListener("click", () => {
+      profileMenu.classList.remove("show");
+    });
+  }
+
+  // Profil menü öğeleri
+  const pmLogin = document.getElementById("pmLogin");
+  if (pmLogin) pmLogin.addEventListener("click", () => {
+    profileMenu.classList.remove("show");
+    openLoginModal();
+  });
+
+  const pmAccountInfo = document.getElementById("pmAccountInfo");
+  if (pmAccountInfo) pmAccountInfo.addEventListener("click", () => {
+    profileMenu.classList.remove("show");
+    showAccountInfo();
+  });
+
+  const pmFriends = document.getElementById("pmFriends");
+  if (pmFriends) pmFriends.addEventListener("click", () => {
+    profileMenu.classList.remove("show");
+    switchTab("tab-friends");
+  });
+
+  const pmLogout = document.getElementById("pmLogout");
+  if (pmLogout) pmLogout.addEventListener("click", () => {
+    profileMenu.classList.remove("show");
+    logout();
+  });
+
   // Tema Seçici Dropdown
   const themeBtn = document.getElementById("themeDropdownBtn");
   const themeMenu = document.getElementById("themeDropdownMenu");
   if (themeBtn && themeMenu) {
-    const syncThemeAria = () => themeBtn.setAttribute("aria-expanded", themeMenu.classList.contains("show") ? "true" : "false");
     themeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       themeMenu.classList.toggle("show");
-      syncThemeAria();
     });
     window.addEventListener("click", () => {
       themeMenu.classList.remove("show");
-      syncThemeAria();
     });
   }
 
@@ -833,8 +856,7 @@ function setupEventListeners() {
       const theme = opt.getAttribute("data-theme");
       applyTheme(theme);
       if (themeMenu) themeMenu.classList.remove("show");
-      if (themeBtn) themeBtn.setAttribute("aria-expanded", "false");
-      showToast(`🎨 Tema değiştirildi`, "info");
+      showToast("Tema değiştirildi", "info");
     });
   });
 
@@ -882,7 +904,6 @@ function setupEventListeners() {
   const btnConfirmCreateInstance = document.getElementById("btnConfirmCreateInstance");
   if (btnConfirmCreateInstance) btnConfirmCreateInstance.addEventListener("click", confirmCreateInstance);
 
-  // Yeni Profil modalı
   initNewProfileModal();
 
   // Modrinth Kurulum Hedefi
@@ -918,7 +939,6 @@ function setupEventListeners() {
       const panel = document.getElementById("installedPanel");
       if (panel) panel.classList.toggle("collapsed", state.installedPanelCollapsed);
       btnToggleInstalled.textContent = state.installedPanelCollapsed ? "▴" : "▾";
-      btnToggleInstalled.setAttribute("aria-expanded", state.installedPanelCollapsed ? "false" : "true");
     });
   }
 
@@ -932,7 +952,6 @@ function setupEventListeners() {
   const btnCancelVModal = document.getElementById("btnCancelVersionSelectorModal");
   if (btnCancelVModal) btnCancelVModal.addEventListener("click", closeVersionSelectorModal);
 
-  // Sürüm Tablosu Arama
   const vTableSearch = document.getElementById("versionTableSearchInput");
   const btnClearVSearch = document.getElementById("btnClearVersionSearch");
   if (vTableSearch) {
@@ -977,7 +996,7 @@ function setupEventListeners() {
     optToggle.addEventListener("change", (e) => {
       state.cookieOptimize = e.target.checked;
       localStorage.setItem("cl_optimize", state.cookieOptimize);
-      showToast(state.cookieOptimize ? "⚡ Optimize motoru devrede!" : "Vanilla moduna geçildi.", "info");
+      showToast(state.cookieOptimize ? "Optimize motoru devrede!" : "Vanilla moduna geçildi.", "info");
     });
   }
 
@@ -1083,10 +1102,6 @@ function setupEventListeners() {
     });
   }
 
-  initVersionSwitchModal();
-  initRailA11y();
-  initDialogA11y();
-
   // ================== AUTH EVENT LISTENERS ==================
   const btnNormalLogin = document.getElementById("btnNormalLogin");
   if (btnNormalLogin) btnNormalLogin.addEventListener("click", () => openLoginModal());
@@ -1095,8 +1110,8 @@ function setupEventListeners() {
   if (btnDiscordLogin) btnDiscordLogin.addEventListener("click", () => {
     const result = loginDiscord();
     if (result.success) {
-      showToast(`🎮 Discord ile giriş yapıldı: ${result.user.username}`, "success");
-      updateAccountUI();
+      showToast("Discord ile giriş yapıldı: " + result.user.username, "success");
+      updateProfileUI();
       closeLoginModal();
     }
   });
@@ -1110,7 +1125,8 @@ function setupEventListeners() {
       tab.classList.add("active");
       const target = tab.getAttribute("data-login-tab");
       document.querySelectorAll(".login-pane").forEach(p => p.classList.remove("active"));
-      document.getElementById(target === "login" ? "loginPaneLogin" : "loginPaneRegister").classList.add("active");
+      const pane = document.getElementById(target === "login" ? "loginPaneLogin" : "loginPaneRegister");
+      if (pane) pane.classList.add("active");
     });
   });
 
@@ -1125,8 +1141,8 @@ function setupEventListeners() {
       }
       const result = loginNormal(username, password);
       if (result.success) {
-        showToast(`✓ Giriş yapıldı: ${result.user.username}`, "success");
-        updateAccountUI();
+        showToast("Giriş yapıldı: " + result.user.username, "success");
+        updateProfileUI();
         closeLoginModal();
       } else {
         showToast(result.error, "error");
@@ -1155,8 +1171,8 @@ function setupEventListeners() {
       }
       const result = registerNormal(username, email, password);
       if (result.success) {
-        showToast(`✓ Kayıt başarılı: ${result.user.username}`, "success");
-        updateAccountUI();
+        showToast("Kayıt başarılı: " + result.user.username, "success");
+        updateProfileUI();
         closeLoginModal();
       } else {
         showToast(result.error, "error");
@@ -1169,8 +1185,8 @@ function setupEventListeners() {
     btnDiscordOAuthLogin.addEventListener("click", () => {
       const result = loginDiscord();
       if (result.success) {
-        showToast(`🎮 Discord ile giriş yapıldı: ${result.user.username}`, "success");
-        updateAccountUI();
+        showToast("Discord ile giriş yapıldı: " + result.user.username, "success");
+        updateProfileUI();
         closeLoginModal();
       }
     });
@@ -1181,8 +1197,8 @@ function setupEventListeners() {
     btnDiscordOAuthRegister.addEventListener("click", () => {
       const result = loginDiscord();
       if (result.success) {
-        showToast(`🎮 Discord ile kayıt yapıldı: ${result.user.username}`, "success");
-        updateAccountUI();
+        showToast("Discord ile kayıt yapıldı: " + result.user.username, "success");
+        updateProfileUI();
         closeLoginModal();
       }
     });
@@ -1191,36 +1207,14 @@ function setupEventListeners() {
   // Hesap Bilgileri butonu
   const btnAccountInfo = document.getElementById("btnAccountInfo");
   if (btnAccountInfo) {
-    btnAccountInfo.addEventListener("click", () => {
-      const modal = document.getElementById("accountInfoModal");
-      const body = document.getElementById("accountInfoBody");
-      if (modal && body) {
-        if (state.isLoggedIn && state.currentUser) {
-          const rank = getRankForPoints(state.points);
-          body.innerHTML = `
-            <div class="account-info-card">
-              <div class="info-row"><span class="info-label">Kullanıcı Adı:</span><span class="info-value">${escapeHtml(state.currentUser.username)}</span></div>
-              <div class="info-row"><span class="info-label">E-posta:</span><span class="info-value">${escapeHtml(state.currentUser.email || '-')}</span></div>
-              <div class="info-row"><span class="info-label">Hesap Türü:</span><span class="info-value">${state.authType === 'discord' ? '🎮 Discord' : '📧 Normal'}</span></div>
-              <div class="info-row"><span class="info-label">Arkadaş Kodu:</span><span class="info-value">${state.myFriendCode}</span></div>
-              <div class="info-row"><span class="info-label">Rütbe:</span><span class="info-value">${rank.icon} ${rank.name}</span></div>
-              <div class="info-row"><span class="info-label">Puan:</span><span class="info-value">${state.points} / 9000</span></div>
-              <div class="info-row"><span class="info-label">Aktif Süre:</span><span class="info-value">${formatTime(state.totalActiveSeconds)}</span></div>
-              <div class="info-row"><span class="info-label">Kayıt Tarihi:</span><span class="info-value">${state.currentUser.createdAt ? new Date(state.currentUser.createdAt).toLocaleDateString('tr-TR') : '-'}</span></div>
-            </div>
-          `;
-        } else {
-          body.innerHTML = '<p>Giriş yapmış bir hesap bulunmamaktadır.</p>';
-        }
-        modal.style.display = "flex";
-      }
-    });
+    btnAccountInfo.addEventListener("click", () => showAccountInfo());
   }
 
   const btnCloseAccountInfoModal = document.getElementById("btnCloseAccountInfoModal");
   if (btnCloseAccountInfoModal) {
     btnCloseAccountInfoModal.addEventListener("click", () => {
-      document.getElementById("accountInfoModal").style.display = "none";
+      const modal = document.getElementById("accountInfoModal");
+      if (modal) modal.style.display = "none";
     });
   }
 
@@ -1281,7 +1275,6 @@ function setupEventListeners() {
     });
   }
 
-  // Arkadaşlık istekleri modal
   const btnFriendRequests = document.getElementById("btnFriendRequests");
   if (btnFriendRequests) {
     btnFriendRequests.addEventListener("click", () => {
@@ -1296,11 +1289,92 @@ function setupEventListeners() {
   const btnCloseFriendRequestsModal = document.getElementById("btnCloseFriendRequestsModal");
   if (btnCloseFriendRequestsModal) {
     btnCloseFriendRequestsModal.addEventListener("click", () => {
-      document.getElementById("friendRequestsModal").style.display = "none";
+      const modal = document.getElementById("friendRequestsModal");
+      if (modal) modal.style.display = "none";
     });
   }
+
+  // Oyunu başlat
+  const btnLaunch = document.getElementById("btnLaunchGame");
+  if (btnLaunch) btnLaunch.addEventListener("click", handleLaunchGame);
+
+  // Progress Modal Gizle
+  const btnDismissProgress = document.getElementById("btnDismissProgressModal");
+  if (btnDismissProgress) {
+    btnDismissProgress.addEventListener("click", () => closeProgressModal();
+  }
+
+  // Modrinth Arama
+  const btnSearch = document.getElementById("btnDoSearch");
+  const sInput = document.getElementById("modrinthSearchInput");
+  if (btnSearch && sInput) {
+    btnSearch.addEventListener("click", () => {
+      state.modrinthQuery = sInput.value;
+      fetchModrinth(true);
+    });
+    sInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        state.modrinthQuery = sInput.value;
+        fetchModrinth(true);
+      }
+    });
+  }
+
+  document.querySelectorAll(".cat-pill").forEach(pill => {
+    pill.addEventListener("click", () => {
+      document.querySelectorAll(".cat-pill").forEach(p => p.classList.remove("active"));
+      pill.classList.add("active");
+      state.modrinthType = pill.getAttribute("data-type");
+      fetchModrinth(true);
+    });
+  });
+
+  // Ekran Görüntüleri
+  const btnOpenScreenshots = document.getElementById("btnOpenScreenshotsFolder");
+  if (btnOpenScreenshots) {
+    btnOpenScreenshots.addEventListener("click", () => openSystemFolder("screenshots"));
+  }
+
+  // Konsol Temizle
+  const btnClearConsole = document.getElementById("btnClearConsole");
+  if (btnClearConsole) {
+    btnClearConsole.addEventListener("click", () => {
+      const cOut = document.getElementById("consoleOutput");
+      if (cOut) cOut.textContent = "Konsol temizlendi.\n";
+    });
+  }
+
+  // Profil Oluşturma Modalı
+  const btnCreateInstance = document.getElementById("btnCreateInstance");
+  if (btnCreateInstance) btnCreateInstance.addEventListener("click", openCreateInstanceModal);
+
+  const btnCloseCreateInstance = document.getElementById("btnCloseCreateInstanceModal");
+  if (btnCloseCreateInstance) btnCloseCreateInstance.addEventListener("click", closeCreateInstanceModal);
+
+  const btnCancelCreateInstance = document.getElementById("btnCancelCreateInstance");
+  if (btnCancelCreateInstance) btnCancelCreateInstance.addEventListener("click", closeCreateInstanceModal);
+
+  const btnConfirmCreateInstance = document.getElementById("btnConfirmCreateInstance");
+  if (btnConfirmCreateInstance) btnConfirmCreateInstance.addEventListener("click", confirmCreateInstance);
+
+  // Hero eylemleri
+  const heroDetails = document.getElementById("heroDetailsBtn");
+  if (heroDetails) {
+    heroDetails.addEventListener("click", () => {
+      const inst = getActiveInstance();
+      if (inst) openProfileDetail(inst.id, "mods");
+      else openCreateInstanceModal();
+    });
+  }
+  const heroManage = document.getElementById("heroManageBtn");
+  if (heroManage) heroManage.addEventListener("click", () => switchTab("tab-instances"));
+
+  // Varsayılan modalları kapat
+  initRailA11y();
+  initDialogA11y();
 }
 
+// ================== SWITCH TAB ==================
 function switchTab(tabId) {
   document.querySelectorAll(".nav-tab").forEach(t => {
     const active = t.getAttribute("data-tab") === tabId;
@@ -1342,7 +1416,7 @@ function startPointsTimer() {
   if (pointsTimerInterval) clearInterval(pointsTimerInterval);
   pointsTimerInterval = setInterval(() => {
     if (state.isLoggedIn) {
-      earnPoints(10); // Her 10 saniyede 10 saniye puan kazan
+      earnPoints(10);
     }
   }, 10000);
 }
@@ -1356,6 +1430,30 @@ function openLoginModal() {
 function closeLoginModal() {
   const modal = document.getElementById("loginModal");
   if (modal) modal.style.display = "none";
+}
+
+function showAccountInfo() {
+  const modal = document.getElementById("accountInfoModal");
+  const body = document.getElementById("accountInfoBody");
+  if (!modal || !body) return;
+  if (state.isLoggedIn && state.currentUser) {
+    const rank = getRankForPoints(state.points);
+    body.innerHTML = `
+      <div class="account-info-card">
+        <div class="info-row"><span class="info-label">Kullanıcı Adı:</span><span class="info-value">${escapeHtml(state.currentUser.username)}</span></div>
+        <div class="info-row"><span class="info-label">E-posta:</span><span class="info-value">${escapeHtml(state.currentUser.email || '-')}</span></div>
+        <div class="info-row"><span class="info-label">Hesap Türü:</span><span class="info-value">${state.authType === 'discord' ? 'Discord' : 'Normal'}</span></div>
+        <div class="info-row"><span class="info-label">Arkadaş Kodu:</span><span class="info-value">${state.myFriendCode}</span></div>
+        <div class="info-row"><span class="info-label">Rütbe:</span><span class="info-value">${rank.icon} ${rank.name}</span></div>
+        <div class="info-row"><span class="info-label">Puan:</span><span class="info-value">${state.points} / 9000</span></div>
+        <div class="info-row"><span class="info-label">Aktif Süre:</span><span class="info-value">${formatTime(state.totalActiveSeconds)}</span></div>
+        <div class="info-row"><span class="info-label">Kayıt Tarihi:</span><span class="info-value">${state.currentUser.createdAt ? new Date(state.currentUser.createdAt).toLocaleDateString('tr-TR') : '-'}</span></div>
+      </div>
+    `;
+  } else {
+    body.innerHTML = '<p>Giriş yapmış bir hesap bulunmamaktadır.</p>';
+  }
+  modal.style.display = "flex";
 }
 
 // ================== PROFİLLER (INSTANCES) ==================
@@ -1375,7 +1473,6 @@ function getModrinthTarget() {
 async function loadInstances() {
   const data = await apiGet("/api/instances", 8000);
   state.instances = (data && Array.isArray(data.instances)) ? data.instances : [];
-
   if (state.activeInstanceId && !getInstanceById(state.activeInstanceId)) {
     state.activeInstanceId = "";
     localStorage.removeItem("cl_instance");
@@ -1384,7 +1481,6 @@ async function loadInstances() {
     state.modrinthTargetId = "";
     localStorage.removeItem("cl_modrinth_target");
   }
-
   populateActiveInstanceSelect();
   renderInstances();
   renderModrinthTargetBar();
@@ -1428,10 +1524,10 @@ function renderInstances() {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
-      <div class="empty-state-icon" aria-hidden="true">🗂️</div>
+      <div class="empty-state-icon">🗂️</div>
       <h3 class="empty-state-title">Henüz profil oluşturulmamış</h3>
       <p class="empty-state-desc">Modların nereye kurulacağını belirlemek için ilk profilinizi oluşturun.</p>
-      <button class="btn btn-primary" id="btnEmptyCreateInstance">➕ Yeni Profil Oluştur</button>
+      <button class="btn btn-primary" id="btnEmptyCreateInstance">+ Yeni Profil Oluştur</button>
     `;
     wrap.appendChild(empty);
     const btn = document.getElementById("btnEmptyCreateInstance");
@@ -1462,8 +1558,8 @@ function renderInstances() {
       iconBox.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
       iconBox.classList.add("inst-icon-letter");
     }
-    const metaText = installing ? `⏳ ${escapeHtml(inst.install_detail || "Kuruluyor...")} %${inst.install_progress || 0}`
-      : failed ? `⚠️ Kurulum hatası: ${escapeHtml(inst.install_detail || "")}`
+    const metaText = installing ? `Kuruluyor... %${inst.install_progress || 0}`
+      : failed ? `Kurulum hatası: ${escapeHtml(inst.install_detail || "")}`
       : `MC ${escapeHtml(inst.version)} • ${escapeHtml(inst.loader)} • ${inst.mod_count || 0} mod`;
     const top = document.createElement("div");
     top.className = "inst-card-top";
@@ -1476,9 +1572,9 @@ function renderInstances() {
     info.innerHTML = `
       <h4 class="inst-name" title="${escapeHtml(inst.name)}">${escapeHtml(inst.name)}</h4>
       <div class="inst-chips">
-        <span class="inst-chip">📦 ${escapeHtml(inst.version || "?")}</span>
-        <span class="inst-chip" title="Mod yükleyici">${LOADER_ICONS[loaderKey] || "📦"} ${escapeHtml(loaderKey)}</span>
-        <span class="inst-chip" title="Yüklü mod sayısı">🧩 ${inst.mod_count || 0}</span>
+        <span class="inst-chip">MC ${escapeHtml(inst.version || "?")}</span>
+        <span class="inst-chip">${LOADER_ICONS[loaderKey] || "📦"} ${escapeHtml(loaderKey)}</span>
+        <span class="inst-chip">${inst.mod_count || 0} mod</span>
       </div>
       ${showStatus ? `<span class="inst-meta">${metaText}</span>` : ""}
     `;
@@ -1493,12 +1589,12 @@ function renderInstances() {
     actions.className = "inst-card-actions";
     const btnActivate = document.createElement("button");
     btnActivate.className = "btn-inst btn-inst-primary";
-    btnActivate.textContent = isActive ? "✓ Seçili" : "Aktif Yap";
+    btnActivate.textContent = isActive ? "Seçili" : "Aktif Yap";
     btnActivate.disabled = installing;
     btnActivate.addEventListener("click", () => setActiveInstance(inst.id));
     const btnMods = document.createElement("button");
     btnMods.className = "btn-inst";
-    btnMods.textContent = "📋 Detaylar";
+    btnMods.textContent = "Detaylar";
     btnMods.addEventListener("click", () => openProfileDetail(inst.id, "mods"));
     const btnDelete = document.createElement("button");
     btnDelete.className = "btn-inst btn-inst-danger";
@@ -1534,7 +1630,7 @@ function setActiveInstance(id) {
   if (inst) {
     const versionInput = document.getElementById("versionInput");
     if (versionInput) versionInput.value = inst.version;
-    showToast(`🗂️ Aktif profil: ${inst.name} (MC ${inst.version} • ${inst.loader})`, "info");
+    showToast("Aktif profil: " + inst.name + " (MC " + inst.version + " • " + inst.loader + ")", "info");
   }
 }
 
@@ -1575,20 +1671,12 @@ function renderPlayHero() {
   const chipsEl = document.getElementById("heroProfileChips");
   const subEl = document.getElementById("heroProfileSub");
   const detailsBtn = document.getElementById("heroDetailsBtn");
-  const railCard = document.getElementById("railProfileCard");
-  const railIcon = document.getElementById("railProfileIcon");
-  const railName = document.getElementById("railProfileName");
-  const railMeta = document.getElementById("railProfileMeta");
   if (!inst) {
     if (nameEl) nameEl.textContent = "Profil seçilmedi";
     if (chipsEl) chipsEl.innerHTML = "";
     if (subEl) subEl.textContent = "Başlamak için yeni bir profil oluşturun.";
-    if (iconEl) iconEl.textContent = "🗂️";
+    if (iconEl) iconEl.textContent = "G";
     if (detailsBtn) detailsBtn.disabled = true;
-    if (railCard) railCard.classList.add("is-empty");
-    if (railIcon) railIcon.textContent = "🗂️";
-    if (railName) railName.textContent = "Profil yok";
-    if (railMeta) railMeta.textContent = "MC • —";
     return;
   }
   const loaderLabel = pdsLoaderLabel(inst.loader);
@@ -1600,7 +1688,7 @@ function renderPlayHero() {
     chipsEl.innerHTML = `
       <span class="chip">MC ${escapeHtml(inst.version || "?")}</span>
       <span class="chip">${escapeHtml(loaderText)}</span>
-      <span class="chip">🧩 ${inst.mod_count || 0} mod</span>
+      <span class="chip">${inst.mod_count || 0} mod</span>
     `;
   }
   if (iconEl) {
@@ -1617,30 +1705,6 @@ function renderPlayHero() {
       iconEl.appendChild(img);
     } else {
       iconEl.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
-    }
-  }
-  if (railCard) railCard.classList.remove("is-empty");
-  if (railName) railName.textContent = inst.name || "Profil";
-  if (railMeta) {
-    railMeta.innerHTML = `
-      <span class="mini-chip">MC ${escapeHtml(inst.version || "?")}</span>
-      <span class="mini-chip">${escapeHtml(loaderLabel)}</span>
-    `;
-  }
-  if (railIcon) {
-    railIcon.innerHTML = "";
-    if (inst.icon) {
-      const img = document.createElement("img");
-      img.src = inst.icon;
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("error", () => {
-        img.remove();
-        railIcon.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
-      });
-      railIcon.appendChild(img);
-    } else {
-      railIcon.textContent = (inst.name || "?").trim().charAt(0).toUpperCase() || "?";
     }
   }
 }
@@ -1663,26 +1727,6 @@ async function updateActiveInstance(fields) {
     renderInstances();
     renderModrinthTargetBar();
   }
-}
-
-// ==================== RIPPLE ====================
-function initRipple() {
-  document.addEventListener("click", (e) => {
-    const btn = e.target && e.target.closest
-      ? e.target.closest("button.btn-primary-action, button.btn-secondary, button.btn-mega-launch, button.nav-tab, button.cat-pill, button.np-loader-card, button.np-combo-item, button.np-pack-item, button.np-side-tab, button.np-adv-toggle, button.control-btn, button.btn-search-go, button.btn-browse-version, button.btn-close-modal, button.installed-cat-tab, button.theme-option, button.login-tab")
-      : null;
-    if (!btn || btn.disabled) return;
-    const rect = btn.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const size = Math.max(rect.width, rect.height);
-    const ripple = document.createElement("span");
-    ripple.className = "np-ripple";
-    ripple.style.width = ripple.style.height = size + "px";
-    ripple.style.left = (e.clientX - rect.left - size / 2) + "px";
-    ripple.style.top = (e.clientY - rect.top - size / 2) + "px";
-    btn.appendChild(ripple);
-    setTimeout(() => ripple.remove(), 620);
-  });
 }
 
 // ==================== PROFİL DETAY ====================
@@ -1726,7 +1770,6 @@ function setupTauriWindowControls() {
 
 // ==================== MODRINTH (SIMPLIFIED) ==================
 function fetchModrinth(reset) {
-  // Simplified - would call backend API
   showToast("Modrinth içerikleri yükleniyor...", "info");
 }
 
@@ -1747,7 +1790,7 @@ function applyInstalledStates() {}
 function refreshInstalledContent() { return Promise.resolve(); }
 function renderInstalledPanel() {}
 function loadScreenshots() {}
-function openSystemFolder(folder) { showToast(`Klasör açılıyor: ${folder || ".minecraft"}`, "info"); }
+function openSystemFolder(folder) { showToast("Klasör açılıyor: " + (folder || ".minecraft"), "info"); }
 function handleLaunchGame() { showToast("Oyun başlatılıyor...", "info"); }
 function closeProgressModal() { const m = document.getElementById("launchProgressModal"); if (m) m.style.display = "none"; }
 function openCreateInstanceModal() { const m = document.getElementById("createInstanceModal"); if (m) m.style.display = "flex"; }
@@ -1762,7 +1805,7 @@ function startStatusPolling() {}
 function initVersionSwitchModal() {}
 function initRailA11y() {}
 function initDialogA11y() {}
-function deleteInstance(id, name) { if (confirm(`${name} profili silinsin mi?`)) showToast("Profil silindi.", "info"); }
+function deleteInstance(id, name) { if (confirm(name + " profili silinsin mi?")) showToast("Profil silindi.", "info"); }
 function setLaunchButton(mode) {}
 
 // ==================== RAIL A11Y ====================
@@ -1802,5 +1845,24 @@ function initDialogA11y() {
   });
 }
 
-// ==================== INIT RIPPLE ====================
+// ==================== RIPPLE ====================
+function initRipple() {
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest
+      ? e.target.closest("button.btn-primary-action, button.btn-secondary, button.btn-mega-launch, button.nav-tab, button.cat-pill, button.np-loader-card, button.np-combo-item, button.np-pack-item, button.np-side-tab, button.np-adv-toggle, button.control-btn, button.btn-search-go, button.btn-browse-version, button.btn-close-modal, button.installed-cat-tab, button.theme-option, button.login-tab, button.profile-menu-item")
+      : null;
+    if (!btn || btn.disabled) return;
+    const rect = btn.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const size = Math.max(rect.width, rect.height);
+    const ripple = document.createElement("span");
+    ripple.className = "np-ripple";
+    ripple.style.width = ripple.style.height = size + "px";
+    ripple.style.left = (e.clientX - rect.left - size / 2) + "px";
+    ripple.style.top = (e.clientY - rect.top - size / 2) + "px";
+    btn.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 620);
+  });
+}
+
 initRipple();
