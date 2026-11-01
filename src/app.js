@@ -715,17 +715,19 @@ function bindInstallDepsToggle(el) {
 
 // ================== BAŞLATMA (INIT) ==================
 document.addEventListener("DOMContentLoaded", async () => {
-  await detectApiBase();
-  initUI();
-  setupEventListeners();
-  loadVersions();
-  loadInstances();
-  startStatusPolling();
-  setupTauriWindowControls();
-  initProfileDetailScreen();
-  startPointsTimer();
-  const friendCodeEl = document.getElementById("myFriendCode");
-  if (friendCodeEl) friendCodeEl.textContent = state.myFriendCode;
+  try { await detectApiBase(); } catch(e) { console.error("detectApiBase error:", e); }
+  try { initUI(); } catch(e) { console.error("initUI error:", e); }
+  try { setupEventListeners(); } catch(e) { console.error("setupEventListeners error:", e); }
+  try { loadVersions(); } catch(e) { console.error("loadVersions error:", e); }
+  try { loadInstances(); } catch(e) { console.error("loadInstances error:", e); }
+  try { startStatusPolling(); } catch(e) { console.error("startStatusPolling error:", e); }
+  try { setupTauriWindowControls(); } catch(e) { console.error("setupTauriWindowControls error:", e); }
+  try { initProfileDetailScreen(); } catch(e) { console.error("initProfileDetailScreen error:", e); }
+  try { startPointsTimer(); } catch(e) { console.error("startPointsTimer error:", e); }
+  try {
+    const friendCodeEl = document.getElementById("myFriendCode");
+    if (friendCodeEl) friendCodeEl.textContent = state.myFriendCode;
+  } catch(e) { console.error("friendCode error:", e); }
 });
 
 function initUI() {
