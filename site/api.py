@@ -103,14 +103,61 @@ def login():
     
     return jsonify({"success": True, "user": {k: v for k, v in user.items() if k != "password"}, "token": user["id"]})
 
+# Discord OAuth Configuration
+DISCORD_CLIENT_ID = "YOUR_DISCORD_CLIENT_ID"  # Replace with actual Discord app client ID
+DISCORD_CLIENT_SECRET = "YOUR_DISCORD_CLIENT_SECRET"  # Replace with actual secret
+DISCORD_REDIRECT_URI = "http://localhost:5000/callback"
+
 @app.route("/api/auth/discord", methods=["POST"])
 def discord_auth():
+    # Step 1: Redirect to Discord OAuth
+    auth_url = f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&redirect_uri={DISCORD_REDIRECT_URI}&response_type=code&scope=identify%20email"
+    return jsonify({"success": True, "auth_url": auth_url})
+
+@app.route("/callback", methods=["GET"])
+def discord_callback():
+    code = request.args.get("code")
+    if not code:
+        return "Authorization code not found", 400
+    
+    # Exchange code for access token
+    import requests
+    token_response = requests.post("https://discord.com/api/oauth2/token", data={
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI
+    }, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    
+    if token_response.status_code != 200:
+        return "Token exchange failed", 400
+    
+    token_data = token_response.json()
+    access_token = token_data.get("access_token")
+    
+    # Fetch user info from Discord
+    user_response = requests.get("https://discord.com/api/users/@me", headers={
+        "Authorization": f"Bearer {access_token}"
+    })
+    
+    if user_response.status_code != 200:
+        return "Failed to fetch user info", 400
+    
+    discord_user_info = user_response.json()
+    
     data = load_data()
-    # Discord OAuth callback - in production, verify Discord token
+    # Check if user already exists
+    existing_user = next((u for u in data["users"] if u.get("discordId") == discord_user_info["id"]), None)
+    
+    if existing_user:
+        return jsonify({"success": True, "user": {k: v for k, v in existing_user.items() if k != "password"}, "token": existing_user["id"]})
+    
+    # Create new user
     discord_user = {
         "id": "discord_" + str(uuid.uuid4())[:8],
-        "username": "DiscordUser" + str(len(data["users"]) + 1),
-        "email": "discord@example.com",
+        "username": discord_user_info.get("username", "DiscordUser"),
+        "email": discord_user_info.get("email", "discord@example.com"),
         "password": "",
         "points": 0,
         "activeSeconds": 0,
@@ -118,15 +165,16 @@ def discord_auth():
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "authType": "discord",
         "rank": "coal",
-        "avatar": None,
-        "discordId": "123456789",
-        "discordTag": "DiscordUser#1234"
+        "avatar": discord_user_info.get("avatar"),
+        "discordId": discord_user_info["id"],
+        "discordTag": f"{discord_user_info['username']}#{discord_user_info.get('discriminator', '0')}"
     }
     data["users"].append(discord_user)
     save_data(data)
     
     return jsonify({"success": True, "user": {k: v for k, v in discord_user.items() if k != "password"}, "token": discord_user["id"]})
 
+@app.route("/api/auth/discord", methods=["POST"])
 # ==================== USER ====================
 
 @app.route("/api/user/<user_id>", methods=["GET"])
